@@ -234,6 +234,146 @@ namespace currency
 
     };
 
+    /************************************************************************/
+    /* transactional model implementation                                   */
+    /************************************************************************/
+    class at_master_base
+    {
+      basic_db& master_db;
+      std::string cid;
+      size_t    count;
+
+      at_master_base(basic_db& mdb, const std::string& container_id)
+        :
+        master_db(mdb),
+        cid(container_id)
+      {}
+    public:
+      template<class t_pod_key>
+      std::string get_composite_key(const t_pod_key& k)
+      {
+        std::string key(sizeof(t_pod_key)+cid.size(), 0);
+        memcpy(&key[0], &cid[0], cid.size());
+        memcpy(&key[cid.size()], &k, sizeof(k));
+        return std::move(key);
+      }
+      std::string get_composite_key(const std::string& k)
+      {
+        std::string key(k.size()+ cid.size(), 0);
+        memcpy(&key[0], &cid[0], cid.size());
+        memcpy(&key[cid.size()], &k[0], k.size());
+        return std::move(key);
+      }
+
+      template<class t_key, class t_pod_object>
+      bool get_pod_object(const t_key& k, t_pod_object& obj)
+      {
+        return master_db.get_pod_object(get_composite_key(k), obj);
+      }
+
+      template<class t_pod_key, class t_pod_object>
+      bool set_pod_object(const t_pod_key& k, const t_pod_object& obj)
+      {
+        return master_db.set_pod_object(get_composite_key(k), obj);
+      }
+
+      template<class t_pod_key, class t_object>
+      bool get_t_object(const t_pod_key& k, t_object& obj)
+      {
+        return master_db.get_t_object(get_composite_key(k), obj);
+      }
+
+      template<class t_pod_key, class t_object>
+      bool set_t_object(const t_pod_key& k, t_object& obj)
+      {
+        return master_db.set_t_object(get_composite_key(k), obj);
+      }
+      template<class t_pod_key>
+      bool erase(const t_pod_key& k)
+      {
+        return master_db.erase(get_composite_key(k));
+      }
+
+      bool init()
+      {
+        if (!get_pod_object(DB_COUNTER_KEY_NAME, count))
+        {
+          bool res = set_pod_object(DB_COUNTER_KEY_NAME, count);
+          CHECK_AND_ASSERT_MES(res, false, "Failed to set counter key to db");
+        }
+        return true;
+      }
+
+      void set_counter(size_t c)
+      {
+        set_pod_object(DB_COUNTER_KEY_NAME, count);
+      }
+
+    };
+
+    
+
+    template<class t_value>
+    class vector_at_master : public at_master_base
+    {
+    public:
+
+      vector_at_master(basic_db& mdb, const std::string& container_id):
+        at_master_base(mdb, container_id)
+        count(0)
+      {}
+
+      typedef std::map<size_t, std::shared_ptr<t_value> > cache_type;
+      cache_type local_cache;
+
+      void push_back(const t_value& v)
+      {
+        set_t_object(count++, v);
+        set_counter(count);
+        //update cache
+        local_cache.insert(count, new t_value(v));
+        LOG_PRINT_MAGENTA("[BLOCKS.PUSH_BACK], block id: " << currency::get_block_hash(bei.bl) << "[" << count - 1 << "]", LOG_LEVEL_4);
+      }
+      size_t size()
+      {
+        return  count;
+      }
+      //size_t clear()
+      //{
+      //  master_db.clear();
+      //  count = 0;
+      //  set_counter(count);
+      //  return true;
+      //}
+      void pop_back()
+      {
+        --count;
+        erase(count);
+        set_pod_object(DB_COUNTER_KEY_NAME, count);
+      }
+
+      std::shared_ptr<const t_value> operator[] (size_t i)
+      {
+        auto it = local_cache.find(i);
+        if (it != local_cache.end())
+        {
+          std::shared_ptr<t_value> shv(new t_value());
+          if (!get_t_object(i, shv->get()))
+          {
+            LOG_ERROR("WRONG INDEX " << i << " IN DB");
+            return shv.reset(nullptr);
+          }
+          return shv;
+        }
+        LOG_PRINT_MAGENTA("[BLOCKS.[ " << i << " ]], block id: " << currency::get_block_hash(local_copy->bl), LOG_LEVEL_4);
+        return it->second;
+      }
+      std::shared_ptr<const t_value> back()
+      {
+        return this->operator [](count - 1);
+      }
+
+    };
   }
 }
 

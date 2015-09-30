@@ -285,13 +285,49 @@ namespace currency
     /*---- serialization bug workaround ----*/    
     
     /*serialization m_alternative_chains excluding*/
-    uint64_t total_check_count = 0;
-    if (archive_t::is_loading::value && version < 27)
-      total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_alternative_chains.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
-    else
-      total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
+    
+//     uint64_t total_check_count = 0;
+//     if (archive_t::is_loading::value && version < 27)
+//       total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_alternative_chains.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
+//     else
+//       total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
+// 
+//     if(archive_t::is_saving::value)
+//     {
+//       ar & total_check_count;
+//     }else
+//     {
+//       uint64_t total_check_count_loaded = 0;
+//       ar & total_check_count_loaded;
+//       if(total_check_count != total_check_count_loaded)
+//       {
+//         LOG_ERROR("Blockchain storage data corruption detected. total_count loaded from file = " << total_check_count_loaded << ", expected = " << total_check_count);
+// 
+//         LOG_PRINT_L0("Blockchain storage:" << ENDL << 
+//           "m_blocks: " << m_blocks.size() << ENDL  << 
+//           "m_blocks_index: " << m_blocks_index.size() << ENDL  << 
+//           "m_transactions: " << m_transactions.size() << ENDL  << 
+//           "m_spent_keys: " << m_spent_keys.size() << ENDL  << 
+//           "m_alternative_chains: " << m_alternative_chains.size() << ENDL  << 
+//           "m_outputs: " << m_outputs.size() << ENDL  << 
+//           "m_invalid_blocks: " << m_invalid_blocks.size() << ENDL  << 
+//           "m_current_block_cumul_sz_limit: " << m_current_block_cumul_sz_limit);
+// 
+//         throw std::runtime_error("Blockchain data corruption");
+//       }
+//     }
+// 
+//     if(version < 25)
+//     {
+//       //re-sync spent flags
+//       if(!resync_spent_tx_flags())
+//       {
+//         LOG_ERROR("resync_spent_tx_flags() failed.");
+//         throw std::runtime_error("resync_spent_tx_flags() failed.");
+//       }
+//     }
 
-    if(archive_t::is_saving::value)
+    ar & m_current_pruned_rs_height;    if(archive_t::is_saving::value)
     {
       ar & total_check_count;
     }else
@@ -343,8 +379,7 @@ namespace currency
     if(version < 26)
       m_current_pruned_rs_height = 0;
     else 
-      ar & m_current_pruned_rs_height;
-    
+      ar & m_current_pruned_rs_height;    
     if(archive_t::is_loading::value)
     {
       prune_ring_signatures_if_need();
