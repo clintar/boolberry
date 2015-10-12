@@ -241,14 +241,18 @@ namespace currency
     {
       basic_db& master_db;
       std::string cid;
+
+    public:
       size_t    count;
 
       at_master_base(basic_db& mdb, const std::string& container_id)
         :
         master_db(mdb),
-        cid(container_id)
+        cid(container_id),
+        count(0)
       {}
-    public:
+
+
       template<class t_pod_key>
       std::string get_composite_key(const t_pod_key& k)
       {
@@ -320,7 +324,6 @@ namespace currency
 
       vector_at_master(basic_db& mdb, const std::string& container_id):
         at_master_base(mdb, container_id)
-        count(0)
       {}
 
       typedef std::map<size_t, std::shared_ptr<t_value> > cache_type;
@@ -331,8 +334,9 @@ namespace currency
         set_t_object(count++, v);
         set_counter(count);
         //update cache
-        local_cache.insert(count, new t_value(v));
-        LOG_PRINT_MAGENTA("[BLOCKS.PUSH_BACK], block id: " << currency::get_block_hash(bei.bl) << "[" << count - 1 << "]", LOG_LEVEL_4);
+        std::pair<size_t, std::shared_ptr<t_value> > vt(count, std::shared_ptr<t_value>(new t_value(v)));
+        local_cache.insert(vt);
+        LOG_PRINT_MAGENTA("[VEC: PUSH_BACK], block [" << count - 1 << "]", LOG_LEVEL_4);
       }
       size_t size()
       {
@@ -358,14 +362,14 @@ namespace currency
         if (it != local_cache.end())
         {
           std::shared_ptr<t_value> shv(new t_value());
-          if (!get_t_object(i, shv->get()))
+          if (!get_t_object(i, *shv.get()))
           {
             LOG_ERROR("WRONG INDEX " << i << " IN DB");
-            return shv.reset(nullptr);
+            return shv;
           }
           return shv;
         }
-        LOG_PRINT_MAGENTA("[BLOCKS.[ " << i << " ]], block id: " << currency::get_block_hash(local_copy->bl), LOG_LEVEL_4);
+        LOG_PRINT_MAGENTA("[BLOCKS.[ " << i << " ]]", LOG_LEVEL_4);
         return it->second;
       }
       std::shared_ptr<const t_value> back()

@@ -108,7 +108,7 @@ namespace currency
     bool print_transactions_statistics();
     bool update_spent_tx_flags_for_input(uint64_t amount, uint64_t global_index, bool spent);
 
-    bool is_storing_blockchain(){return m_is_blockchain_storing;}
+    bool is_storing_blockchain(){ return m_is_blockchain_storing; }
     wide_difficulty_type block_difficulty(size_t i);
     bool copy_scratchpad(std::vector<crypto::hash>& dst);//TODO: not the best way, add later update method instead of full copy
     bool copy_scratchpad(std::string& dst);
@@ -124,13 +124,13 @@ namespace currency
       BOOST_FOREACH(const auto& bl_id, block_ids)
       {
         auto it = m_blocks_index.find(bl_id);
-        if(it == m_blocks_index.end())
+        if (it == m_blocks_index.end())
           missed_bs.push_back(bl_id);
         else
         {
           CHECK_AND_ASSERT_MES(it->second < m_blocks.size(), false, "Internal error: bl_id=" << string_tools::pod_to_hex(bl_id)
-            << " have index record with offset="<<it->second<< ", bigger then m_blocks.size()=" << m_blocks.size());
-            blocks.push_back(m_blocks[it->second]->bl);
+            << " have index record with offset=" << it->second << ", bigger then m_blocks.size()=" << m_blocks.size());
+          blocks.push_back(m_blocks[it->second]->bl);
         }
       }
       return true;
@@ -144,10 +144,10 @@ namespace currency
       BOOST_FOREACH(const auto& tx_id, txs_ids)
       {
         auto it = m_transactions.find(tx_id);
-        if(it == m_transactions.end())
+        if (it == m_transactions.end())
         {
           transaction tx;
-          if(!m_tx_pool.get_transaction(tx_id, tx))
+          if (!m_tx_pool.get_transaction(tx_id, tx))
             missed_txs.push_back(tx_id);
           else
             txs.push_back(tx);
@@ -172,12 +172,16 @@ namespace currency
     typedef std::map<uint64_t, std::vector<std::pair<crypto::hash, size_t>>> outputs_container; //crypto::hash - tx hash, size_t - index of out in transaction
     typedef std::map<std::string, std::list<alias_info_base>> aliases_container; //alias can be address address address + view key
     typedef std::unordered_map<account_public_address, std::string> address_to_aliases_container;
-    
+
     tx_memory_pool& m_tx_pool;
     critical_section m_blockchain_lock; // TODO: add here reader/writer lock
 
     // main chain
-    db::vector_accessor<block_extended_info> m_blocks;
+    //db::vector_accessor<block_extended_info> m_blocks;
+
+    db::basic_db m_masterdb;
+    db::vector_at_master<block_extended_info> m_blocks;
+
     blocks_container m_blocks_old;               // height  -> block_extended_info
     blocks_by_id_index m_blocks_index;       // crypto::hash -> height
     transactions_container m_transactions;
@@ -253,18 +257,18 @@ namespace currency
   /*                                                                      */
   /************************************************************************/
 
-  #define CURRENT_BLOCKCHAIN_STORAGE_ARCHIVE_VER          28
-  #define CURRENT_TRANSACTION_CHAIN_ENTRY_ARCHIVE_VER     3
-  #define CURRENT_BLOCK_EXTENDED_INFO_ARCHIVE_VER         1
+#define CURRENT_BLOCKCHAIN_STORAGE_ARCHIVE_VER          28
+#define CURRENT_TRANSACTION_CHAIN_ENTRY_ARCHIVE_VER     3
+#define CURRENT_BLOCK_EXTENDED_INFO_ARCHIVE_VER         1
 
   template<class archive_t>
   void blockchain_storage::serialize(archive_t & ar, const unsigned int version)
   {
-    if(version < 22)
+    if (version < 22)
       return;
     CHECK_PROJECT_NAME();
     CRITICAL_REGION_LOCAL(m_blockchain_lock);
-    if(version < 28)
+    if (version < 28)
       ar & m_blocks_old;
 
     ar & m_blocks_index;
@@ -272,7 +276,7 @@ namespace currency
     ar & m_spent_keys;
 
     //do not keep alternative blocks
-    if(version < 27)
+    if (version < 27)
       ar & m_alternative_chains;
 
     ar & m_outputs;
@@ -280,57 +284,22 @@ namespace currency
     ar & m_current_block_cumul_sz_limit;
     ar & m_aliases;
     ar & m_scratchpad;
-    
 
-    /*---- serialization bug workaround ----*/    
-    
+
+    /*---- serialization bug workaround ----*/
+
     /*serialization m_alternative_chains excluding*/
-    
-//     uint64_t total_check_count = 0;
-//     if (archive_t::is_loading::value && version < 27)
-//       total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_alternative_chains.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
-//     else
-//       total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
-// 
-//     if(archive_t::is_saving::value)
-//     {
-//       ar & total_check_count;
-//     }else
-//     {
-//       uint64_t total_check_count_loaded = 0;
-//       ar & total_check_count_loaded;
-//       if(total_check_count != total_check_count_loaded)
-//       {
-//         LOG_ERROR("Blockchain storage data corruption detected. total_count loaded from file = " << total_check_count_loaded << ", expected = " << total_check_count);
-// 
-//         LOG_PRINT_L0("Blockchain storage:" << ENDL << 
-//           "m_blocks: " << m_blocks.size() << ENDL  << 
-//           "m_blocks_index: " << m_blocks_index.size() << ENDL  << 
-//           "m_transactions: " << m_transactions.size() << ENDL  << 
-//           "m_spent_keys: " << m_spent_keys.size() << ENDL  << 
-//           "m_alternative_chains: " << m_alternative_chains.size() << ENDL  << 
-//           "m_outputs: " << m_outputs.size() << ENDL  << 
-//           "m_invalid_blocks: " << m_invalid_blocks.size() << ENDL  << 
-//           "m_current_block_cumul_sz_limit: " << m_current_block_cumul_sz_limit);
-// 
-//         throw std::runtime_error("Blockchain data corruption");
-//       }
-//     }
-// 
-//     if(version < 25)
-//     {
-//       //re-sync spent flags
-//       if(!resync_spent_tx_flags())
-//       {
-//         LOG_ERROR("resync_spent_tx_flags() failed.");
-//         throw std::runtime_error("resync_spent_tx_flags() failed.");
-//       }
-//     }
+    uint64_t total_check_count = 0;
+    if (archive_t::is_loading::value && version < 27)
+      total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_alternative_chains.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
+    else
+      total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
 
-    ar & m_current_pruned_rs_height;    if(archive_t::is_saving::value)
+    if (archive_t::is_saving::value)
     {
       ar & total_check_count;
-    }else
+    }
+    else
     {
       uint64_t total_check_count_loaded = 0;
       ar & total_check_count_loaded;
@@ -339,63 +308,64 @@ namespace currency
         LOG_ERROR("Blockchain storage data corruption detected. total_count loaded from file = " << total_check_count_loaded << ", expected = " << total_check_count);
         LOG_PRINT_L0("Assuming daemon crash since total_count lower than expected. Attempting database rollback...");
         size_t rollback_amount = m_blocks.size() - m_blocks_index.size();
-        if(total_check_count_loaded < total_check_count)
+        if (total_check_count_loaded < total_check_count)
         {
-          for(size_t i = 0; i < rollback_amount; i++)
+          for (size_t i = 0; i < rollback_amount; i++)
           {
             m_blocks.pop_back();
           }
           total_check_count = m_blocks.size() + m_blocks_index.size() + m_transactions.size() + m_spent_keys.size() + m_outputs.size() + m_invalid_blocks.size() + m_current_block_cumul_sz_limit;
         }
       }
-      if(total_check_count != total_check_count_loaded)
+      if (total_check_count != total_check_count_loaded)
       {
         LOG_ERROR("Blockchain storage data corruption detected. total_count loaded from file = " << total_check_count_loaded << ", expected = " << total_check_count);
 
-        LOG_PRINT_L0("Blockchain storage:" << ENDL << 
-          "m_blocks: " << m_blocks.size() << ENDL  << 
-          "m_blocks_index: " << m_blocks_index.size() << ENDL  << 
-          "m_transactions: " << m_transactions.size() << ENDL  << 
-          "m_spent_keys: " << m_spent_keys.size() << ENDL  << 
-          "m_alternative_chains: " << m_alternative_chains.size() << ENDL  << 
-          "m_outputs: " << m_outputs.size() << ENDL  << 
-          "m_invalid_blocks: " << m_invalid_blocks.size() << ENDL  << 
+        LOG_PRINT_L0("Blockchain storage:" << ENDL <<
+          "m_blocks: " << m_blocks.size() << ENDL <<
+          "m_blocks_index: " << m_blocks_index.size() << ENDL <<
+          "m_transactions: " << m_transactions.size() << ENDL <<
+          "m_spent_keys: " << m_spent_keys.size() << ENDL <<
+          "m_alternative_chains: " << m_alternative_chains.size() << ENDL <<
+          "m_outputs: " << m_outputs.size() << ENDL <<
+          "m_invalid_blocks: " << m_invalid_blocks.size() << ENDL <<
           "m_current_block_cumul_sz_limit: " << m_current_block_cumul_sz_limit);
 
         throw std::runtime_error("Blockchain data corruption");
       }
     }
 
-    if(version < 25)
+    if (version < 25)
     {
       //re-sync spent flags
-      if(!resync_spent_tx_flags())
+      if (!resync_spent_tx_flags())
       {
         LOG_ERROR("resync_spent_tx_flags() failed.");
         throw std::runtime_error("resync_spent_tx_flags() failed.");
       }
     }
 
-    if(version < 26)
+    if (version < 26)
       m_current_pruned_rs_height = 0;
-    else 
-      ar & m_current_pruned_rs_height;    
-    if(archive_t::is_loading::value)
+    else
+      ar & m_current_pruned_rs_height;
+
+    if (archive_t::is_loading::value)
     {
       prune_ring_signatures_if_need();
     }
 
 
 
-    LOG_PRINT_L2("Blockchain storage:" << ENDL << 
-        "m_blocks: " << m_blocks.size() << ENDL  << 
-        "m_blocks_index: " << m_blocks_index.size() << ENDL  << 
-        "m_transactions: " << m_transactions.size() << ENDL  << 
-        "m_spent_keys: " << m_spent_keys.size() << ENDL  << 
-        "m_alternative_chains: " << m_alternative_chains.size() << ENDL  << 
-        "m_outputs: " << m_outputs.size() << ENDL  << 
-        "m_invalid_blocks: " << m_invalid_blocks.size() << ENDL  << 
-        "m_current_block_cumul_sz_limit: " << m_current_block_cumul_sz_limit);
+    LOG_PRINT_L2("Blockchain storage:" << ENDL <<
+      "m_blocks: " << m_blocks.size() << ENDL <<
+      "m_blocks_index: " << m_blocks_index.size() << ENDL <<
+      "m_transactions: " << m_transactions.size() << ENDL <<
+      "m_spent_keys: " << m_spent_keys.size() << ENDL <<
+      "m_alternative_chains: " << m_alternative_chains.size() << ENDL <<
+      "m_outputs: " << m_outputs.size() << ENDL <<
+      "m_invalid_blocks: " << m_invalid_blocks.size() << ENDL <<
+      "m_current_block_cumul_sz_limit: " << m_current_block_cumul_sz_limit);
   }
 
   //------------------------------------------------------------------
@@ -403,42 +373,42 @@ namespace currency
   bool blockchain_storage::scan_outputkeys_for_indexes(const txin_to_key& tx_in_to_key, visitor_t& vis, uint64_t* pmax_related_block_height)
   {
     CRITICAL_REGION_LOCAL(m_blockchain_lock);
-    auto it = m_outputs.find(tx_in_to_key.amount);
-    if(it == m_outputs.end() || !tx_in_to_key.key_offsets.size())
+    const auto it = m_outputs.find(tx_in_to_key.amount);
+    if (it == m_outputs.end() || !tx_in_to_key.key_offsets.size())
       return false;
 
     std::vector<uint64_t> absolute_offsets = relative_output_offsets_to_absolute(tx_in_to_key.key_offsets);
 
 
-    std::vector<std::pair<crypto::hash, size_t> >& amount_outs_vec = it->second;
+    const std::vector<std::pair<crypto::hash, size_t> >& amount_outs_vec = it->second;
     size_t count = 0;
     BOOST_FOREACH(uint64_t i, absolute_offsets)
     {
-      if(i >= amount_outs_vec.size() )
+      if (i >= amount_outs_vec.size())
       {
         LOG_PRINT_L0("Wrong index in transaction inputs: " << i << ", expected maximum " << amount_outs_vec.size() - 1);
         return false;
       }
-      transactions_container::iterator tx_it = m_transactions.find(amount_outs_vec[i].first);
-      CHECK_AND_ASSERT_MES(tx_it != m_transactions.end(), false, "Wrong transaction id in output indexes: " <<string_tools::pod_to_hex(amount_outs_vec[i].first));
+      transactions_container::const_iterator tx_it = m_transactions.find(amount_outs_vec[i].first);
+      CHECK_AND_ASSERT_MES(tx_it != m_transactions.end(), false, "Wrong transaction id in output indexes: " << string_tools::pod_to_hex(amount_outs_vec[i].first));
       CHECK_AND_ASSERT_MES(amount_outs_vec[i].second < tx_it->second.tx.vout.size(), false,
         "Wrong index in transaction outputs: " << amount_outs_vec[i].second << ", expected less then " << tx_it->second.tx.vout.size());
       //check mix_attr
-      
+
       CHECKED_GET_SPECIFIC_VARIANT(tx_it->second.tx.vout[amount_outs_vec[i].second].target, const txout_to_key, outtk, false);
-      if(outtk.mix_attr > 1)
+      if (outtk.mix_attr > 1)
         CHECK_AND_ASSERT_MES(tx_in_to_key.key_offsets.size() >= outtk.mix_attr, false, "transaction out[" << count << "] is marked to be used minimum with " << static_cast<uint32_t>(outtk.mix_attr) << "parts in ring signature, but input used only " << tx_in_to_key.key_offsets.size());
-      else if(outtk.mix_attr == CURRENCY_TO_KEY_OUT_FORCED_NO_MIX)
+      else if (outtk.mix_attr == CURRENCY_TO_KEY_OUT_FORCED_NO_MIX)
         CHECK_AND_ASSERT_MES(tx_in_to_key.key_offsets.size() == 1, false, "transaction out[" << count << "] is marked to be used without mixins in ring signature, but input used is " << tx_in_to_key.key_offsets.size());
 
-      if(!vis.handle_output(tx_it->second.tx, tx_it->second.tx.vout[amount_outs_vec[i].second]))
+      if (!vis.handle_output(tx_it->second.tx, tx_it->second.tx.vout[amount_outs_vec[i].second]))
       {
         LOG_PRINT_L0("Failed to handle_output for output no = " << count << ", with absolute offset " << i);
         return false;
       }
-      if(count++ == absolute_offsets.size()-1 && pmax_related_block_height)
+      if (count++ == absolute_offsets.size() - 1 && pmax_related_block_height)
       {
-        if(*pmax_related_block_height < tx_it->second.m_keeper_block_height)
+        if (*pmax_related_block_height < tx_it->second.m_keeper_block_height)
           *pmax_related_block_height = tx_it->second.m_keeper_block_height;
       }
     }
@@ -453,4 +423,3 @@ namespace currency
 BOOST_CLASS_VERSION(currency::blockchain_storage, CURRENT_BLOCKCHAIN_STORAGE_ARCHIVE_VER)
 BOOST_CLASS_VERSION(currency::blockchain_storage::transaction_chain_entry, CURRENT_TRANSACTION_CHAIN_ENTRY_ARCHIVE_VER)
 BOOST_CLASS_VERSION(currency::block_extended_info, CURRENT_BLOCK_EXTENDED_INFO_ARCHIVE_VER)
-  

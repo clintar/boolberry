@@ -37,7 +37,8 @@ blockchain_storage::blockchain_storage(tx_memory_pool& tx_pool):m_tx_pool(tx_poo
                                                                 m_donations_account(AUTO_VAL_INIT(m_donations_account)), 
                                                                 m_royalty_account(AUTO_VAL_INIT(m_royalty_account)),
                                                                 m_is_blockchain_storing(false), 
-                                                                m_current_pruned_rs_height(0)
+                                                                m_current_pruned_rs_height(0), 
+                                                                m_blocks(m_masterdb, "b")
 {
   bool r = get_donation_accounts(m_donations_account, m_royalty_account);
   CHECK_AND_ASSERT_THROW_MES(r, "failed to load donation accounts");
@@ -87,11 +88,20 @@ bool blockchain_storage::init(const std::string& config_folder)
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   m_config_folder = config_folder;
 
-  if (!m_blocks.init(m_config_folder + "/" CURRENCY_BLOCKS_DB_FILENAME))
+  if (!m_masterdb.open(m_config_folder + "/" CURRENCY_BLOCKS_DB_FILENAME))
   {
     LOG_ERROR("Failed to initialize db file at path " << m_config_folder + "/" CURRENCY_BLOCKS_DB_FILENAME);
     return false;
   }
+
+  if (!m_blocks.init())
+  {
+    LOG_ERROR("Failed to initialize db file at path " << m_config_folder + "/" CURRENCY_BLOCKS_DB_FILENAME);
+    return false;
+  }
+
+
+
 
 
   LOG_PRINT_L0("Loading blockchain...");
@@ -244,7 +254,7 @@ bool blockchain_storage::reset_and_set_genesis_block(const block& b)
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   m_transactions.clear();
   m_spent_keys.clear();
-  m_blocks.clear();
+  //m_blocks.clear();
   m_blocks_index.clear();
   m_alternative_chains.clear();
   m_outputs.clear();
