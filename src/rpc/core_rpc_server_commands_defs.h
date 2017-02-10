@@ -328,6 +328,7 @@ namespace currency
       uint64_t transactions_cnt_per_day;
       uint64_t transactions_volume_per_day;
       nodetool::maintainers_info_external mi;
+      std::string top_block_hash;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(status)
@@ -351,6 +352,7 @@ namespace currency
         KV_SERIALIZE(transactions_cnt_per_day)
         KV_SERIALIZE(transactions_volume_per_day)
         KV_SERIALIZE(mi)
+        KV_SERIALIZE(top_block_hash)
       END_KV_SERIALIZE_MAP()
     };
   };    

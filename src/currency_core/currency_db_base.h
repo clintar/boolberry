@@ -8,6 +8,7 @@
 #include "blockchain_basic_tructs.h"
 #include "currency_db_base.h"
 #include "leveldb/db.h"
+#include "leveldb/status.h"
 #include "common/boost_serialization_helper.h"
 #include "currency_boost_serialization.h"
 #include "difficulty.h"
@@ -26,9 +27,11 @@ namespace currency
     {
       std::string m_path;
       db_handle m_pdb;
+      bool m_syncdb = true;
     public:
       basic_db() :m_pdb(nullptr)
-      {}
+      {
+      }
       ~basic_db(){ close(); }
       bool close()
       {
@@ -52,22 +55,42 @@ namespace currency
         }
         return true;
       }
-
+      bool empty()
+      {
+        leveldb::Iterator* it = m_pdb->NewIterator(leveldb::ReadOptions());
+        it->SeekToFirst();
+        if(it->Valid())
+        {
+          return 1;
+        }  
+        else
+        {
+          return 0;
+        }
+      }
+      bool get_sync()
+      {
+        return m_syncdb;
+      }
+      void set_sync(bool sync)
+      {
+        m_syncdb = sync;
+      }
       template<class t_pod_key>
       bool erase(const t_pod_key& k)
       {
         TRY_ENTRY();
         leveldb::WriteOptions wo;
-        wo.sync = true;
+        wo.sync = m_syncdb;
         std::string res_buff;
-        leveldb::Status s = m_pdb->Delete(wo, leveldb::Slice((const char*)&k, sizeof(k)));
+        leveldb::Status s = m_pdb->Delete(wo, k);
         if (!s.ok())
           return false;
 
         return true;
         CATCH_ENTRY_L0("get_t_object_from_db", false);
       }
-
+        
 
       template<class t_pod_key, class t_object>
       bool get_t_object(const t_pod_key& k, t_object& obj)
@@ -75,7 +98,7 @@ namespace currency
         TRY_ENTRY();
         leveldb::ReadOptions ro;
         std::string res_buff;
-        leveldb::Status s = m_pdb->Get(ro, leveldb::Slice((const char*)&k, sizeof(k)), &res_buff);
+        leveldb::Status s = m_pdb->Get(ro, k, &res_buff);
         if (!s.ok())
           return false;
 
@@ -95,17 +118,17 @@ namespace currency
         }
         return open(m_path);
       }
-
+      
       template<class t_pod_key, class t_object>
       bool set_t_object(const t_pod_key& k, t_object& obj)
       {
         TRY_ENTRY();
         leveldb::WriteOptions wo;
-        wo.sync = true;
+        wo.sync = m_syncdb;
         std::string obj_buff;
         tools::serialize_obj_to_buff(obj, obj_buff);
 
-        leveldb::Status s = m_pdb->Put(wo, leveldb::Slice((const char*)&k, sizeof(k)), leveldb::Slice(obj_buff));
+        leveldb::Status s = m_pdb->Put(wo, k, leveldb::Slice(obj_buff));
         if (!s.ok())
           return false;
 
@@ -121,11 +144,11 @@ namespace currency
         TRY_ENTRY();
         leveldb::ReadOptions ro;
         std::string res_buff;
-        leveldb::Status s = m_pdb->Get(ro, leveldb::Slice((const char*)&k, sizeof(k)), &res_buff);
+        leveldb::Status s = m_pdb->Get(ro, k, &res_buff);
         if (!s.ok())
           return false;
 
-        CHECK_AND_ASSERT_MES(sizeof(t_pod_object) == res_buff.size(), false, "sizes missmath at get_pod_object_from_db(). returned size = " 
+        CHECK_AND_ASSERT_MES(sizeof(t_pod_object) == res_buff.size(), false, "sizes mismatch at get_pod_object_from_db(). returned size = " 
           << res_buff.size() << "expected: " << sizeof(t_pod_object));
         
         obj = *(t_pod_object*)res_buff.data();
@@ -140,10 +163,10 @@ namespace currency
 
         TRY_ENTRY();
         leveldb::WriteOptions wo;
-        wo.sync = true;
+        wo.sync = m_syncdb;
         std::string obj_buff((const char*)&obj, sizeof(obj));
 
-        leveldb::Status s = m_pdb->Put(wo, leveldb::Slice((const char*)&k, sizeof(k)), leveldb::Slice(obj_buff));
+        leveldb::Status s = m_pdb->Put(wo, k, leveldb::Slice(obj_buff));
         if (!s.ok())
           return false;
 
@@ -251,8 +274,14 @@ namespace currency
         cid(container_id),
         count(0)
       {}
-
-
+      bool get_sync()
+      {
+        return master_db.get_sync();
+      }
+      bool empty()
+      {
+        return master_db.empty();
+      }
       template<class t_pod_key>
       std::string get_composite_key(const t_pod_key& k)
       {
@@ -302,6 +331,7 @@ namespace currency
       {
         if (!get_pod_object(DB_COUNTER_KEY_NAME, count))
         {
+           LOG_PRINT_MAGENTA("No count read from DB" << DB_COUNTER_KEY_NAME, LOG_LEVEL_4);
           bool res = set_pod_object(DB_COUNTER_KEY_NAME, count);
           CHECK_AND_ASSERT_MES(res, false, "Failed to set counter key to db");
         }
@@ -310,12 +340,177 @@ namespace currency
 
       void set_counter(size_t c)
       {
+        LOG_PRINT_MAGENTA("count sent to DB:" << c << ", key name: " << DB_COUNTER_KEY_NAME, LOG_LEVEL_4);
         set_pod_object(DB_COUNTER_KEY_NAME, count);
       }
 
     };
 
-    
+
+
+    template<class t_value>
+    class unordered_map_at_master : public at_master_base
+    {
+    public:
+      class MyIterator : public std::iterator<std::forward_iterator_tag, int>
+    {
+        public:
+            MyIterator(int* data, int length, bool end = false)
+            {
+                this->data= data;
+                this->length= length;
+                if(end)
+                    pointer=-1;
+            }
+            MyIterator& operator++()
+            {
+                if(pointer!= length-1) {
+                    pointer++;
+                }
+                else {
+                    pointer= -1;
+                }
+                return *this;
+            }
+
+            bool operator==(const MyIterator& other) const { return pointer==other.pointer; }
+            bool operator!=(const MyIterator& other) const { return pointer!= other.pointer; }
+            int& operator*() const
+            {
+                if(pointer==-1)
+                    return nullvalue;
+                else
+                    return data[pointer];
+            }
+        private:
+            value_type* data     = nullptr;
+            int length;
+            int pointer          = 0;
+            mutable value_type nullvalue = 0;
+    };
+
+    class MyConstIterator : public std::iterator<std::forward_iterator_tag, const int>
+    {
+        public:
+//            MyConstIterator(int const* data, int length, bool end = false)
+//            {
+//                this->data= data;
+//                this->length= length;
+//                if(end)
+//                    pointer=-1;
+//            }
+//            MyConstIterator& operator++()
+//            {
+//                if(pointer!= length-1) {
+//                    pointer++;
+//                }
+//                else {
+//                    pointer= -1;
+//                }
+//                return *this;
+//            }
+//
+//            bool operator==(const MyConstIterator& other) const { return pointer==other.pointer; }
+//            bool operator!=(const MyConstIterator& other) const { return pointer!= other.pointer; }
+//            int const& operator*() const
+//            {
+//                if(pointer==-1)
+//                    return nullvalue;
+//                else
+//                    return data[pointer];
+//            }
+//        private:
+//            value_type* data     = nullptr;
+//            int length;
+//            int pointer          = 0;
+//            value_type nullvalue = 0;
+    };
+
+public:
+    typedef MyIterator iterator_type;
+    typedef MyConstIterator const_iterator_type;
+      unordered_map_at_master(basic_db& mdb, const std::string& container_id):
+        at_master_base(mdb, container_id)
+      {}
+        
+      typedef std::map<crypto::hash, std::shared_ptr<t_value> > cache_type;
+      cache_type local_cache;
+      
+      const t_value insert(const t_value& v)
+      {
+        set_t_object(count++, v);
+        set_counter(count);
+        //update cache
+        std::pair<size_t, std::shared_ptr<t_value> > vt(count, std::shared_ptr<t_value>(new t_value(v)));
+        //local_cache.insert(vt);
+        LOG_PRINT_MAGENTA("[VEC: PUSH_BACK], block [" << count - 1 << "]", LOG_LEVEL_4);
+        return v;
+      }
+      
+      std::shared_ptr<t_value> end()
+      {
+        std::shared_ptr<t_value> shv(new t_value());
+        return &shv;
+      }  
+      
+      size_t size()
+      {
+        return  count;
+      }
+      
+     
+      size_t count(crypto::hash v)
+      {
+        if(empty())
+        {
+          return 0;
+        }
+        else
+        {
+          return 1;
+        }
+      }
+      iterator_type find(crypto::hash i)
+      {
+        auto it = local_cache.find(i);
+        if (local_cache.empty() || it == local_cache.end())
+        {
+          std::shared_ptr<t_value> shv(new t_value());
+          if (!get_t_object(i, &shv))
+          {
+            LOG_ERROR("WRONG INDEX " << i << " IN DB");
+            return &shv;
+          }
+          return &shv;
+        }
+        LOG_PRINT_MAGENTA("[BLOCKS.[ " << i << " ]]", LOG_LEVEL_4);
+        return it;
+      }
+      std::shared_ptr<const t_value> operator[] (crypto::hash i)
+      {
+        auto it = local_cache.find(i);
+        if (local_cache.empty() || it == local_cache.end())
+        {
+          std::shared_ptr<t_value> shv(new t_value());
+          if (!get_t_object(i, *shv.get()))
+          {
+            LOG_ERROR("WRONG INDEX " << i << " IN DB");
+            return shv;
+          }
+          return shv;
+        }
+        LOG_PRINT_MAGENTA("[BLOCKS.[ " << i << " ]]", LOG_LEVEL_4);
+        return it;
+      }
+      
+      size_t clear()
+      {
+        //master_db.clear();
+        count = 0;
+        set_counter(count);
+        return true;
+      }
+    };    
 
     template<class t_value>
     class vector_at_master : public at_master_base
@@ -328,27 +523,46 @@ namespace currency
 
       typedef std::map<size_t, std::shared_ptr<t_value> > cache_type;
       cache_type local_cache;
-
+      
+      /* attempt to just unserialize instead of convert 
+      t_value temp;
+      friend class boost::serialization::access;
+      
+      template<class Archive>
+      void save(Archive & ar, const unsigned int version) const {
+        //ar & d1_ & d2_;
+      }
+      template<class Archive>
+        void load(Archive & ar, const unsigned int version) {
+          ar & temp;
+          
+          push_back(temp);
+          delte te
+        }
+      BOOST_SERIALIZATION_SPLIT_MEMBER()
+       */
       void push_back(const t_value& v)
       {
         set_t_object(count++, v);
         set_counter(count);
         //update cache
         std::pair<size_t, std::shared_ptr<t_value> > vt(count, std::shared_ptr<t_value>(new t_value(v)));
-        local_cache.insert(vt);
-        LOG_PRINT_MAGENTA("[VEC: PUSH_BACK], block [" << count - 1 << "]", LOG_LEVEL_4);
+        //local_cache.insert(vt);
+        //LOG_PRINT_MAGENTA("[VEC: PUSH_BACK], block [" << count - 1 << "]", LOG_LEVEL_4);
+        LOG_PRINT_MAGENTA("[BLOCKS.PUSH_BACK], block id: " << currency::get_block_hash(v.bl) << "[" << count - 1 << "]", LOG_LEVEL_4);
       }
       size_t size()
       {
         return  count;
       }
-      //size_t clear()
-      //{
-      //  master_db.clear();
-      //  count = 0;
-      //  set_counter(count);
-      //  return true;
-      //}
+      size_t clear()
+      {
+        //master_db.clear();
+        count = 0;
+        set_counter(count);
+        return true;
+      }
+      
       void pop_back()
       {
         --count;
@@ -359,7 +573,7 @@ namespace currency
       std::shared_ptr<const t_value> operator[] (size_t i)
       {
         auto it = local_cache.find(i);
-        if (it != local_cache.end())
+        if (local_cache.empty() || it == local_cache.end())
         {
           std::shared_ptr<t_value> shv(new t_value());
           if (!get_t_object(i, *shv.get()))
@@ -374,10 +588,12 @@ namespace currency
       }
       std::shared_ptr<const t_value> back()
       {
-        return this->operator [](count - 1);
+          return this->operator [](count - 1);
       }
 
     };
-  }
-}
+    
+    
+   }
 
+}

@@ -99,7 +99,11 @@ bool blockchain_storage::init(const std::string& config_folder)
     LOG_ERROR("Failed to initialize db file at path " << m_config_folder + "/" CURRENCY_BLOCKS_DB_FILENAME);
     return false;
   }
-
+  
+  if(m_blocks.size())
+  {
+      LOG_PRINT_L0("Loaded m_blocks db... count:" << m_blocks.size());
+  }
 
 
 
@@ -119,12 +123,22 @@ bool blockchain_storage::init(const std::string& config_folder)
   if (!m_blocks.size() && m_blocks_old.size())
   {
     LOG_PRINT_GREEN("Converting blocks to db file....", LOG_LEVEL_0);
-
+    m_masterdb.set_sync(false);
+    if(m_masterdb.get_sync())
+    {
+        LOG_PRINT_GREEN("sync enabled", LOG_LEVEL_0);
+    }
+    else
+    {
+        LOG_PRINT_GREEN("sync disabled", LOG_LEVEL_0);
+    }
     for (const auto& b : m_blocks_old)
     {
       m_blocks.push_back(b);
     }
+    m_masterdb.set_sync(true);
     LOG_PRINT_GREEN("Converting DONE!", LOG_LEVEL_0);
+    m_blocks_old.clear();
   }
 
 
@@ -215,7 +229,7 @@ void blockchain_storage::set_checkpoints(checkpoints&& chk_pts)
 bool blockchain_storage::prune_ring_signatures(uint64_t height, uint64_t& transactions_pruned, uint64_t& signatures_pruned)
 {
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
-  CHECK_AND_ASSERT_MES(height < m_blocks.size(), false, "prune_ring_signatures called with wrong parametr " << height << ", m_blocks.size() " << m_blocks.size());
+  CHECK_AND_ASSERT_MES(height < m_blocks.size(), false, "prune_ring_signatures called with wrong parameter " << height << ", m_blocks.size() " << m_blocks.size());
   for(const auto& h: m_blocks[height]->bl.tx_hashes)
   {
     auto it = m_transactions.find(h);
@@ -236,12 +250,12 @@ bool blockchain_storage::prune_ring_signatures_if_need()
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   if(m_blocks.size() && m_checkpoints.get_top_checkpoint_height() && m_checkpoints.get_top_checkpoint_height() > m_current_pruned_rs_height)
   {    
-    LOG_PRINT_CYAN("Starting pruning ring signatues...", LOG_LEVEL_0);
+    LOG_PRINT_CYAN("Started pruning of ring signatures...", LOG_LEVEL_0);
     uint64_t tx_count = 0, sig_count = 0;
     for(uint64_t height = m_current_pruned_rs_height; height < m_blocks.size() && height <= m_checkpoints.get_top_checkpoint_height(); height++)
     {
       bool res = prune_ring_signatures(height, tx_count, sig_count);
-      CHECK_AND_ASSERT_MES(res, false, "filed to prune_ring_signatures for height = " << height);
+      CHECK_AND_ASSERT_MES(res, false, "failed to prune_ring_signatures for height = " << height);
     }
     m_current_pruned_rs_height = m_checkpoints.get_top_checkpoint_height();
     LOG_PRINT_CYAN("Transaction pruning finished: " << sig_count << " signatures released in " << tx_count << " transactions.", LOG_LEVEL_0);
@@ -254,11 +268,12 @@ bool blockchain_storage::reset_and_set_genesis_block(const block& b)
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   m_transactions.clear();
   m_spent_keys.clear();
-  //m_blocks.clear();
+  m_blocks.clear();
   m_blocks_index.clear();
   m_alternative_chains.clear();
   m_outputs.clear();
   m_scratchpad.clear();
+  m_masterdb.clear();
 
   block_verification_context bvc = boost::value_initialized<block_verification_context>();
   add_new_block(b, bvc);
@@ -766,15 +781,17 @@ bool blockchain_storage::validate_miner_transaction(const block& b, size_t cumul
     money_in_use -= donation + royalty;
   }
 
-
+//    LOG_PRINT_L1("block base reward before " << base_reward );
   std::vector<size_t> last_blocks_sizes;
   get_last_n_blocks_sizes(last_blocks_sizes, CURRENCY_REWARD_BLOCKS_WINDOW);
   uint64_t max_donation = 0;
+//  LOG_PRINT_L1("block info  " << last_blocks_sizes.size() << ", " << cumulative_block_size << ", " << already_generated_coins << ", " << already_donated_coins << ", " << base_reward << ", " << max_donation);
   if(!get_block_reward(misc_utils::median(last_blocks_sizes), cumulative_block_size, already_generated_coins, already_donated_coins, base_reward, max_donation))
   {
     LOG_PRINT_L0("block size " << cumulative_block_size << " is bigger than allowed for this blockchain");
     return false;
   }
+//  LOG_PRINT_L1("block base reward after " << base_reward );
   if(base_reward + fee < money_in_use)
   {
     LOG_ERROR("coinbase transaction spend too much money (" << print_money(money_in_use) << "). Block reward is " << print_money(base_reward + fee) << "(" << print_money(base_reward) << "+" << print_money(fee) << ")");
@@ -2329,7 +2346,7 @@ bool blockchain_storage::handle_block_to_main_chain(const block& bl, const crypt
   LOG_PRINT_L3("SCRATCHPAD_SHOT FOR H=" << bei.height+1 << ENDL << dump_scratchpad(m_scratchpad));
 #endif
 
-
+LOG_PRINT_L1("add block info  " << bei.block_cumulative_size << ", " << bei.cumulative_difficulty << ", " << bei.already_generated_coins << ", " << bei.already_donated_coins << ", " << bl.tx_hashes.size() << ", " << m_scratchpad.size());
   m_blocks.push_back(bei);
   update_next_comulative_size_limit();
   TIME_MEASURE_FINISH(block_processing_time);

@@ -80,8 +80,14 @@ namespace currency
       res.status = CORE_RPC_STATUS_BUSY; 
       return true; 
     }
-
+    crypto::hash top_hash;
+    if (!m_core.get_blockchain_top(res.height, top_hash))
+    {
+      res.status = "Failed";
+      return false;
+    }
     res.height = m_core.get_current_blockchain_height();
+    res.top_block_hash = string_tools::pod_to_hex(top_hash);
     res.difficulty = m_core.get_blockchain_storage().get_difficulty_for_next_block().convert_to<uint64_t>();
     res.tx_count = m_core.get_blockchain_storage().get_total_transactions() - res.height; //without coinbase
     res.tx_pool_size = m_core.get_pool_transactions_count();
