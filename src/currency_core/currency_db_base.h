@@ -6,7 +6,6 @@
 #include "include_base_utils.h"
 
 #include "blockchain_basic_tructs.h"
-#include "currency_db_base.h"
 #include "leveldb/db.h"
 #include "leveldb/status.h"
 #include "common/boost_serialization_helper.h"
