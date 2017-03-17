@@ -287,14 +287,14 @@ namespace currency
         std::string key(sizeof(t_pod_key)+cid.size(), 0);
         memcpy(&key[0], &cid[0], cid.size());
         memcpy(&key[cid.size()], &k, sizeof(k));
-        return std::move(key);
+        return key;
       }
       std::string get_composite_key(const std::string& k)
       {
         std::string key(k.size()+ cid.size(), 0);
         memcpy(&key[0], &cid[0], cid.size());
         memcpy(&key[cid.size()], &k[0], k.size());
-        return std::move(key);
+        return key;
       }
 
       template<class t_key, class t_pod_object>
@@ -458,17 +458,6 @@ public:
       }
       
      
-      size_t count(crypto::hash v)
-      {
-        if(empty())
-        {
-          return 0;
-        }
-        else
-        {
-          return 1;
-        }
-      }
       iterator_type find(crypto::hash i)
       {
         auto it = local_cache.find(i);
