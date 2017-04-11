@@ -91,7 +91,7 @@ namespace currency
     res.incoming_connections_count = total_conn - res.outgoing_connections_count;
     res.white_peerlist_size = m_p2p.get_peerlist_manager().get_white_peers_count();
     res.grey_peerlist_size = m_p2p.get_peerlist_manager().get_gray_peers_count();
-    res.current_blocks_median = m_core.get_blockchain_storage().get_current_comulative_blocksize_limit()/2;
+    res.current_blocks_median = m_core.get_blockchain_storage().get_current_cumulative_blocksize_limit()/2;
     res.current_network_hashrate_50 = m_core.get_blockchain_storage().get_current_hashrate(50);
     res.current_network_hashrate_350 = m_core.get_blockchain_storage().get_current_hashrate(350);
     res.scratchpad_size = m_core.get_blockchain_storage().get_scratchpad_size();
@@ -117,7 +117,7 @@ namespace currency
   {
     CHECK_CORE_READY();
     std::list<std::pair<block, std::list<transaction> > > bs;
-    if(!m_core.find_blockchain_supplement(req.block_ids, bs, res.current_height, res.start_height, COMMAND_RPC_GET_BLOCKS_FAST_MAX_COUNT))
+    if(!m_core.find_blockchain_supplement(req.start_height, req.block_ids, bs, res.current_height, res.start_height, COMMAND_RPC_GET_BLOCKS_FAST_MAX_COUNT))
     {
       res.status = "Failed";
       return false;
@@ -625,9 +625,15 @@ namespace currency
       error_resp.message = std::string("To big height: ") + std::to_string(req.height) + ", current blockchain height = " +  std::to_string(m_core.get_current_blockchain_height());
       return false;
     }
-    block blk = AUTO_VAL_INIT(blk);
-    bool r = m_core.get_blockchain_storage().get_block_by_height(req.height, blk);
-    
+    crypto::hash block_hash = m_core.get_block_id_by_height(req.height);
+    block blk;
+    bool have_block = m_core.get_block_by_hash(block_hash, blk);
+    if (!have_block)
+    {
+      error_resp.code = CORE_RPC_ERROR_CODE_INTERNAL_ERROR;
+      error_resp.message = "Internal error: can't get block by height. Height = " + std::to_string(req.height) + '.';
+      return false;
+    }
     bool responce_filled = fill_block_header_responce(blk, false, res.block_header);
     if (!responce_filled)
     {

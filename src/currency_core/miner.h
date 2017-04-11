@@ -11,7 +11,12 @@
 #include "currency_basic.h"
 #include "difficulty.h"
 #include "math_helper.h"
+//TODO Clintar Fix this back up for aliases
+#if BLOCKCHAIN_DB == DB_LMDB
+#include "blockchain.h"
+#else
 #include "blockchain_storage.h"
+#endif
 
 namespace currency
 {
@@ -30,7 +35,13 @@ namespace currency
   class miner
   {
   public: 
+      //TODO: Clintar Fix this back up for aliases
+#if BLOCKCHAIN_DB == DB_LMDB
+    miner(i_miner_handler* phandler, Blockchain& bc);
+#else
     miner(i_miner_handler* phandler, blockchain_storage& bc);
+#endif
+    //miner(i_miner_handler* phandler);
     ~miner();
     bool init(const boost::program_options::variables_map& vm);
     bool deinit();
@@ -108,7 +119,12 @@ namespace currency
     std::list<boost::thread> m_threads;
     ::critical_section m_threads_lock;
     i_miner_handler* m_phandler;
+    //TODO: Clintar fix this back up for aliases
+#if BLOCKCHAIN_DB == DB_LMDB
+    Blockchain& m_bc;
+#else
     blockchain_storage& m_bc;
+#endif
     account_public_address m_mine_address;
     math_helper::once_a_time_seconds<5> m_update_block_template_interval;
     math_helper::once_a_time_seconds<2> m_update_merge_hr_interval;

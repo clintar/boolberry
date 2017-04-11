@@ -25,6 +25,8 @@ namespace po = boost::program_options;
 using namespace currency;
 using namespace nodetool;
 
+unsigned int epee::g_test_dbg_lock_sleep = 0;
+
 namespace
 {
   const command_line::arg_descriptor<std::string> arg_ip                 = {"ip", "set ip"};

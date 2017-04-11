@@ -12,7 +12,11 @@
 #include "currency_protocol/currency_protocol_handler_common.h"
 #include "storages/portable_storage_template_helper.h"
 #include "tx_pool.h"
+#if BLOCKCHAIN_DB == DB_LMDB
+#include "blockchain.h"
+#else
 #include "blockchain_storage.h"
+#endif
 #include "miner.h"
 #include "connection_context.h"
 #include "currency_core/currency_stat_info.h"
@@ -35,6 +39,8 @@ namespace currency
      bool on_idle();
      bool handle_incoming_tx(const blobdata& tx_blob, tx_verification_context& tvc, bool keeped_by_block);
      bool handle_incoming_block(const blobdata& block_blob, block_verification_context& bvc, bool update_miner_blocktemplate = true);
+     bool prepare_handle_incoming_blocks(const std::list<block_complete_entry>  &blocks);
+     bool cleanup_handle_incoming_blocks(bool force_sync = false);
      i_currency_protocol* get_protocol(){return m_pprotocol;}
      tx_memory_pool& get_tx_pool(){ return m_mempool; };
 
@@ -60,7 +66,6 @@ namespace currency
      }
      crypto::hash get_block_id_by_height(uint64_t height);
      bool get_transactions(const std::vector<crypto::hash>& txs_ids, std::list<transaction>& txs, std::list<crypto::hash>& missed_txs);
-     bool get_transaction(const crypto::hash &h, transaction &tx);
      bool get_block_by_hash(const crypto::hash &h, block &blk);
      void get_all_known_block_ids(std::list<crypto::hash> &main, std::list<crypto::hash> &alt, std::list<crypto::hash> &invalid);
 
@@ -77,7 +82,7 @@ namespace currency
      bool have_block(const crypto::hash& id);
      bool get_short_chain_history(std::list<crypto::hash>& ids);
      bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, NOTIFY_RESPONSE_CHAIN_ENTRY::request& resp);
-     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
+     bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
      bool get_stat_info(core_stat_info& st_inf);
      bool get_backward_blocks_sizes(uint64_t from_height, std::vector<size_t>& sizes, size_t count);
      bool get_tx_outputs_gindexs(const crypto::hash& tx_id, std::vector<uint64_t>& indexs);
@@ -85,14 +90,19 @@ namespace currency
      bool get_random_outs_for_amounts(const COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::request& req, COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::response& res);
      void pause_mine();
      void resume_mine();
+#if BLOCKCHAIN_DB == DB_LMDB
+     Blockchain& get_blockchain_storage(){return m_blockchain_storage;}
+#else
      blockchain_storage& get_blockchain_storage(){return m_blockchain_storage;}
+#endif
      //debug functions
      void print_blockchain(uint64_t start_index, uint64_t end_index);
      void print_blockchain_index();
      std::string print_pool(bool short_format);
      void print_blockchain_outs(const std::string& file);
      void on_synchronized();
-
+     bool is_key_image_spent(const crypto::key_image& key_im);
+     bool are_key_images_spent(const std::vector<crypto::key_image>& key_im, std::vector<bool> &spent);
    private:
      bool add_new_tx(const transaction& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prefix_hash, tx_verification_context& tvc, bool keeped_by_block);
      bool add_new_tx(const transaction& tx, tx_verification_context& tvc, bool keeped_by_block);
@@ -106,7 +116,6 @@ namespace currency
      bool check_tx_semantic(const transaction& tx, bool keeped_by_block);
      //check if tx already in memory pool or in main blockchain
 
-     bool is_key_image_spent(const crypto::key_image& key_im);
 
      bool check_tx_ring_signature(const txin_to_key& tx, const crypto::hash& tx_prefix_hash, const std::vector<crypto::signature>& sig);
      bool is_tx_spendtime_unlocked(uint64_t unlock_time);
@@ -117,7 +126,11 @@ namespace currency
 
 
      tx_memory_pool m_mempool;
+#if BLOCKCHAIN_DB == DB_LMDB
+     Blockchain m_blockchain_storage;
+#else
      blockchain_storage m_blockchain_storage;
+#endif
      i_currency_protocol* m_pprotocol;
      critical_section m_incoming_tx_lock;
      //m_miner and m_miner_addres are probably temporary here

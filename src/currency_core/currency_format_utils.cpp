@@ -9,7 +9,7 @@ using namespace epee;
 #include "currency_format_utils.h"
 #include <boost/foreach.hpp>
 #include "currency_config.h"
-#include "miner.h"
+//#include "miner.h"
 #include "crypto/crypto.h"
 #include "crypto/hash.h"
 
@@ -137,7 +137,11 @@ namespace currency
     }
     block_reward += fee;
     uint64_t total_donation_amount = 0;//(max_donation * percents_to_donate)/100;
+#if BLOCKCHAIN_DB == DB_LMDB
+    if((height + 1) && !((height + 1)%CURRENCY_DONATIONS_INTERVAL))
+#else
     if(height && !(height%CURRENCY_DONATIONS_INTERVAL))
+#endif
       total_donation_amount = amount_to_donate;
 
     uint64_t royalty = 0;

@@ -16,6 +16,8 @@
 #include "is_out_to_acc.h"
 #include "keccak_test.h"
 
+unsigned int epee::g_test_dbg_lock_sleep = 0;
+
 int main(int argc, char** argv)
 {
   set_process_affinity(1);

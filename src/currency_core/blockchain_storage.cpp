@@ -31,7 +31,7 @@ using namespace currency;
 DISABLE_VS_WARNINGS(4267)
 
 //------------------------------------------------------------------
-blockchain_storage::blockchain_storage(tx_memory_pool& tx_pool):m_tx_pool(tx_pool), 
+blockchain_storage::blockchain_storage(tx_memory_pool* tx_pool):m_tx_pool(tx_pool), 
                                                                 m_current_block_cumul_sz_limit(0), 
                                                                 m_is_in_checkpoint_zone(false), 
                                                                 m_donations_account(AUTO_VAL_INIT(m_donations_account)), 
@@ -170,7 +170,7 @@ bool blockchain_storage::pop_block_from_blockchain()
   m_blocks_index.erase(bl_ind);
   //pop block from core
   m_blocks.pop_back();
-  m_tx_pool.on_blockchain_dec(m_blocks.size()-1, get_top_block_id());
+  m_tx_pool->on_blockchain_dec(m_blocks.size()-1, get_top_block_id());
   return true;
 }
 //------------------------------------------------------------------
@@ -327,7 +327,7 @@ bool blockchain_storage::purge_transaction_from_blockchain(const crypto::hash& t
   if(!is_coinbase(tx))
   {
     currency::tx_verification_context tvc = AUTO_VAL_INIT(tvc);
-    bool r = m_tx_pool.add_tx(tx, tvc, true);
+    bool r = m_tx_pool->add_tx(tx, tvc, true);
     CHECK_AND_ASSERT_MES(r, false, "purge_block_data_from_blockchain: failed to add transaction to transaction pool");
   }
 
@@ -733,8 +733,6 @@ bool blockchain_storage::validate_miner_transaction(const block& b, size_t cumul
     
     money_in_use -= donation + royalty;
   }
-
-
   std::vector<size_t> last_blocks_sizes;
   get_last_n_blocks_sizes(last_blocks_sizes, CURRENCY_REWARD_BLOCKS_WINDOW);
   uint64_t max_donation = 0;
@@ -779,7 +777,7 @@ bool blockchain_storage::get_last_n_blocks_sizes(std::vector<size_t>& sz, size_t
   return get_backward_blocks_sizes(m_blocks.size() -1, sz, count);
 }
 //------------------------------------------------------------------
-uint64_t blockchain_storage::get_current_comulative_blocksize_limit()
+uint64_t blockchain_storage::get_current_cumulative_blocksize_limit()
 {
   return m_current_block_cumul_sz_limit;
 }
@@ -813,7 +811,7 @@ bool blockchain_storage::create_block_template(block& b, const account_public_ad
 
   size_t txs_size;
   uint64_t fee;
-  if (!m_tx_pool.fill_block_template(b, median_size, already_generated_coins, already_donated_coins,  txs_size, fee)) {
+  if (!m_tx_pool->fill_block_template(b, median_size, already_generated_coins, already_donated_coins,  txs_size, fee)) {
     return false;
   }
   /*
@@ -1551,6 +1549,29 @@ bool blockchain_storage::find_blockchain_supplement(const std::list<crypto::hash
   return true;
 }
 //------------------------------------------------------------------
+bool blockchain_storage::find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count)
+{
+  CRITICAL_REGION_LOCAL(m_blockchain_lock);
+  if(req_start_block > 0) {
+     start_height = req_start_block; 
+  } else {
+    if(!find_blockchain_supplement(qblock_ids, start_height))
+      return false;
+  }
+
+  total_height = get_current_blockchain_height();
+  size_t count = 0;
+  for(size_t i = start_height; i != m_blocks.size() && count < max_count; i++, count++)
+  {
+    blocks.resize(blocks.size()+1);
+    blocks.back().first = m_blocks[i].bl;
+    std::list<crypto::hash> mis;
+    get_transactions(m_blocks[i].bl.tx_hashes, blocks.back().second, mis);
+    CHECK_AND_ASSERT_MES(!mis.size(), false, "internal error, transaction from block not found");
+  }
+  return true;
+}
+//------------------------------------------------------------------
 bool blockchain_storage::find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count)
 {
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
@@ -2205,7 +2226,7 @@ bool blockchain_storage::handle_block_to_main_chain(const block& bl, const crypt
     transaction tx;
     size_t blob_size = 0;
     uint64_t fee = 0;
-    if(!m_tx_pool.take_tx(tx_id, tx, blob_size, fee))
+    if(!m_tx_pool->take_tx(tx_id, tx, blob_size, fee))
     {
       LOG_PRINT_L0("Block with id: " << id  << "have at least one unknown transaction with id: " << tx_id);
       purge_block_data_from_blockchain(bl, tx_processed_count);
@@ -2224,7 +2245,7 @@ bool blockchain_storage::handle_block_to_main_chain(const block& bl, const crypt
     {
       LOG_PRINT_L0("Block with id: " << id  << "have at least one transaction (id: " << tx_id << ") with wrong inputs.");
       currency::tx_verification_context tvc = AUTO_VAL_INIT(tvc);
-      bool add_res = m_tx_pool.add_tx(tx, tvc, true);
+      bool add_res = m_tx_pool->add_tx(tx, tvc, true);
       CHECK_AND_ASSERT_MES2(add_res, "handle_block_to_main_chain: failed to add transaction back to transaction pool");
       purge_block_data_from_blockchain(bl, tx_processed_count);
       add_block_as_invalid(bl, id);
@@ -2237,7 +2258,7 @@ bool blockchain_storage::handle_block_to_main_chain(const block& bl, const crypt
     {
        LOG_PRINT_L0("Block with id: " << id << " failed to add transaction to blockchain storage");
        currency::tx_verification_context tvc = AUTO_VAL_INIT(tvc);
-       bool add_res = m_tx_pool.add_tx(tx, tvc, true);
+       bool add_res = m_tx_pool->add_tx(tx, tvc, true);
        CHECK_AND_ASSERT_MES2(add_res, "handle_block_to_main_chain: failed to add transaction back to transaction pool");
        purge_block_data_from_blockchain(bl, tx_processed_count);
        bvc.m_verifivation_failed = true;
@@ -2311,7 +2332,7 @@ bool blockchain_storage::handle_block_to_main_chain(const block& bl, const crypt
   bvc.m_added_to_main_chain = true;
   
 
-  m_tx_pool.on_blockchain_inc(bei.height, id);
+  m_tx_pool->on_blockchain_inc(bei.height, id);
   //LOG_PRINT_L0("BLOCK: " << ENDL << "" << dump_obj_as_json(bei.bl));
   return true;
 }
@@ -2334,7 +2355,7 @@ bool blockchain_storage::add_new_block(const block& bl_, block_verification_cont
   //copy block here to let modify block.target
   block bl = bl_;
   crypto::hash id = get_block_hash(bl);
-  CRITICAL_REGION_LOCAL(m_tx_pool);//to avoid deadlock lets lock tx_pool for whole add/reorganize process
+  CRITICAL_REGION_LOCAL(*m_tx_pool);//to avoid deadlock lets lock tx_pool for whole add/reorganize process
   CRITICAL_REGION_LOCAL1(m_blockchain_lock);
   if(have_block(id))
   {

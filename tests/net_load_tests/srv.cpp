@@ -187,6 +187,8 @@ namespace
   };
 }
 
+unsigned int epee::g_test_dbg_lock_sleep = 0;
+
 int main(int argc, char** argv)
 {
   //set up logging options

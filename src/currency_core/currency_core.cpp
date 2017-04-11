@@ -18,6 +18,9 @@ using namespace epee;
 #include "currency_format_utils.h"
 #include "misc_language.h"
 
+#include "blockchain_db/blockchain_db.h"
+#include "blockchain_db/lmdb/db_lmdb.h"
+#include "miner_common.h"
 DISABLE_VS_WARNINGS(4355)
 
 namespace currency
@@ -26,7 +29,12 @@ namespace currency
   //-----------------------------------------------------------------------------------------------
   core::core(i_currency_protocol* pprotocol):
               m_mempool(m_blockchain_storage),
+#if BLOCKCHAIN_DB == DB_LMDB
               m_blockchain_storage(m_mempool),
+#else
+              m_blockchain_storage(&m_mempool),
+#endif
+//TODO: Clintar Fix this back up for aliases
               m_miner(this, m_blockchain_storage),
               m_miner_address(boost::value_initialized<account_public_address>()), 
               m_starter_message_showed(false)
@@ -85,24 +93,7 @@ namespace currency
   {
     return m_blockchain_storage.get_transactions(txs_ids, txs, missed_txs);
   }
-  //-----------------------------------------------------------------------------------------------
-  bool core::get_transaction(const crypto::hash &h, transaction &tx)
-  {
-    std::vector<crypto::hash> ids;
-    ids.push_back(h);
-    std::list<transaction> ltx;
-    std::list<crypto::hash> missing;
-    if (m_blockchain_storage.get_transactions(ids, ltx, missing))
-    {
-      if (ltx.size() > 0)
-      {
-        tx = *ltx.begin();
-        return true;
-      }
-    }
 
-    return false;
-  }
   //-----------------------------------------------------------------------------------------------
   bool core::get_alternative_blocks(std::list<block>& blocks)
   {
@@ -121,7 +112,141 @@ namespace currency
     r = m_mempool.init(m_config_folder);
     CHECK_AND_ASSERT_MES(r, false, "Failed to initialize memory pool");
 
+#if BLOCKCHAIN_DB == DB_LMDB
+    //std::string db_type = command_line::get_arg(vm, daemon_args::arg_db_type);
+    std::string db_type = "lmdb";
+    //std::string db_sync_mode = command_line::get_arg(vm, daemon_args::arg_db_sync_mode);
+    std::string db_sync_mode = "fastest:async:1000";
+    //bool fast_sync = command_line::get_arg(vm, daemon_args::arg_fast_block_sync) != 0;
+    bool fast_sync = true;
+    //uint64_t blocks_threads = command_line::get_arg(vm, daemon_args::arg_prep_blocks_threads);
+    uint64_t blocks_threads = 16;
+
+    BlockchainDB* db = nullptr;
+    uint64_t BDB_FAST_MODE = 0;
+    uint64_t BDB_FASTEST_MODE = 0;
+    uint64_t BDB_SAFE_MODE = 0;
+    if (db_type == "lmdb")
+    {
+      db = new BlockchainLMDB();
+    }
+    else if (db_type == "berkeley")
+    {
+#if defined(BERKELEY_DB)
+      db = new BlockchainBDB();
+      BDB_FAST_MODE = DB_TXN_WRITE_NOSYNC;
+      BDB_FASTEST_MODE = DB_TXN_NOSYNC;
+      BDB_SAFE_MODE = DB_TXN_SYNC;
+#else
+      LOG_ERROR("BerkeleyDB support disabled.");
+      return false;
+#endif
+    }
+    else
+    {
+      LOG_ERROR("Attempted to use non-existant database type");
+      return false;
+    }
+
+    boost::filesystem::path folder(m_config_folder);
+    boost::filesystem::path sp_folder(m_config_folder);
+    sp_folder /= "/scratchpad.bin";
+    const std::string scratchpad_path = sp_folder.string();
+
+
+    folder /= db->get_db_name();
+
+    LOG_PRINT_L0("Loading blockchain from folder " << folder.string() << " ...");
+    
+
+    const std::string filename = folder.string();
+    // temporarily default to fastest:async:1000
+    blockchain_db_sync_mode sync_mode = db_async;
+    uint64_t blocks_per_sync = 1000;
+
+    try
+    {
+      uint64_t db_flags = 0;
+      bool islmdb = db_type == "lmdb";
+
+      std::vector<std::string> options;
+      boost::trim(db_sync_mode);
+      boost::split(options, db_sync_mode, boost::is_any_of(" :"));
+
+      for(const auto &option : options)
+        LOG_PRINT_L0("option: " << option);
+
+      // temporarily default to fastest:async:1000
+      uint64_t DEFAULT_FLAGS = islmdb ? MDB_WRITEMAP | MDB_MAPASYNC | MDB_NORDAHEAD | MDB_NOMETASYNC | MDB_NOSYNC :
+          BDB_FASTEST_MODE;
+
+      if(options.size() == 0)
+      {
+        // temporarily default to fastest:async:1000
+        db_flags = DEFAULT_FLAGS;
+      }
+
+      bool safemode = false;
+      if(options.size() >= 1)
+      {
+        if(options[0] == "safe")
+        {
+          safemode = true;
+          db_flags = islmdb ? MDB_NORDAHEAD : BDB_SAFE_MODE;
+          sync_mode = db_nosync;
+        }
+        else if(options[0] == "fast")
+          db_flags = islmdb ? MDB_NOMETASYNC | MDB_NOSYNC | MDB_NORDAHEAD : BDB_FAST_MODE;
+        else if(options[0] == "fastest")
+          db_flags = islmdb ? MDB_WRITEMAP | MDB_MAPASYNC | MDB_NORDAHEAD | MDB_NOMETASYNC | MDB_NOSYNC : BDB_FASTEST_MODE;
+        else
+          db_flags = DEFAULT_FLAGS;
+      }
+
+      if(options.size() >= 2 && !safemode)
+      {
+        if(options[1] == "sync")
+          sync_mode = db_sync;
+        else if(options[1] == "async")
+          sync_mode = db_async;
+      }
+
+      if(options.size() >= 3 && !safemode)
+      {
+        blocks_per_sync = atoll(options[2].c_str());
+        if(blocks_per_sync > 5000)
+          blocks_per_sync = 5000;
+        if(blocks_per_sync == 0)
+          blocks_per_sync = 1;
+      }
+
+      //bool auto_remove_logs = command_line::get_arg(vm, daemon_args::arg_db_auto_remove_logs) != 0;
+      bool auto_remove_logs = 0;
+      db->set_auto_remove_logs(auto_remove_logs);
+      db->open(filename, db_flags);
+      if(!db->m_open)
+    	  return false;
+    }
+    catch (const DB_ERROR& e)
+    {
+      LOG_PRINT_L0("Error opening database: " << e.what());
+      return false;
+    }
+
+    m_blockchain_storage.set_user_options(blocks_threads,
+        blocks_per_sync, sync_mode, fast_sync);
+
+    r = m_blockchain_storage.init(db);
+
+    //bool show_time_stats = command_line::get_arg(vm, daemon_args::arg_show_time_stats) != 0;
+    bool show_time_stats = true;
+    m_blockchain_storage.set_show_time_stats(show_time_stats);
+    LOG_PRINT_L0("Loading scratchpad file: " << sp_folder.string() << " ...");
+    m_blockchain_storage.import_scratchpad_from_file(scratchpad_path);
+#else
     r = m_blockchain_storage.init(m_config_folder);
+#endif
+
     CHECK_AND_ASSERT_MES(r, false, "Failed to initialize blockchain storage");
 
     r = m_miner.init(vm);
@@ -146,6 +271,12 @@ namespace currency
     m_miner.stop();
     m_miner.deinit();
     m_mempool.deinit();
+
+    boost::filesystem::path sp_folder(m_config_folder);
+    sp_folder /= "/scratchpad.bin";
+    const std::string sp_path = sp_folder.string();
+    LOG_PRINT_L0("Saving scratchpad file: " << sp_folder.string() << " ...");
+    m_blockchain_storage.extport_scratchpad_to_file(sp_path);
     m_blockchain_storage.deinit();
     return true;
   }
@@ -247,9 +378,9 @@ namespace currency
       return false;
     }
 
-    if(!keeped_by_block && get_object_blobsize(tx) >= m_blockchain_storage.get_current_comulative_blocksize_limit() - CURRENCY_COINBASE_BLOB_RESERVED_SIZE)
+    if(!keeped_by_block && get_object_blobsize(tx) >= m_blockchain_storage.get_current_cumulative_blocksize_limit() - CURRENCY_COINBASE_BLOB_RESERVED_SIZE)
     {
-      LOG_PRINT_RED_L0("tx have to big size " << get_object_blobsize(tx) << ", expected not bigger than " << m_blockchain_storage.get_current_comulative_blocksize_limit() - CURRENCY_COINBASE_BLOB_RESERVED_SIZE);
+      LOG_PRINT_RED_L0("tx have to big size " << get_object_blobsize(tx) << ", expected not bigger than " << m_blockchain_storage.get_current_cumulative_blocksize_limit() - CURRENCY_COINBASE_BLOB_RESERVED_SIZE);
       return false;
     }
 
@@ -275,6 +406,21 @@ namespace currency
     bool r = parse_and_validate_tx_extra(tx, ei);
     if(!r)
       return false;
+    return true;
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::is_key_image_spent(const crypto::key_image &key_image)
+  {
+    return m_blockchain_storage.have_tx_keyimg_as_spent(key_image);
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::are_key_images_spent(const std::vector<crypto::key_image>& key_im, std::vector<bool> &spent)
+  {
+    spent.clear();
+    BOOST_FOREACH(auto& ki, key_im)
+    {
+      spent.push_back(m_blockchain_storage.have_tx_keyimg_as_spent(ki));
+    }
     return true;
   }
   //-----------------------------------------------------------------------------------------------
@@ -304,10 +450,10 @@ namespace currency
     return m_blockchain_storage.get_total_transactions();
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::get_outs(uint64_t amount, std::list<crypto::public_key>& pkeys)
-  {
-    return m_blockchain_storage.get_outs(amount, pkeys);
-  }
+//  bool core::get_outs(uint64_t amount, std::list<crypto::public_key>& pkeys)
+//  {
+//    return m_blockchain_storage.get_outs(amount, pkeys);
+//  }
   //-----------------------------------------------------------------------------------------------
   bool core::add_new_tx(const transaction& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prefix_hash, tx_verification_context& tvc, bool keeped_by_block)
   {
@@ -336,9 +482,9 @@ namespace currency
     return m_blockchain_storage.find_blockchain_supplement(qblock_ids, resp);
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count)
+  bool core::find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count)
   {
-    return m_blockchain_storage.find_blockchain_supplement(qblock_ids, blocks, total_height, start_height, max_count);
+    return m_blockchain_storage.find_blockchain_supplement(req_start_block, qblock_ids, blocks, total_height, start_height, max_count);
   }
   //-----------------------------------------------------------------------------------------------
   void core::print_blockchain(uint64_t start_index, uint64_t end_index)
@@ -418,15 +564,34 @@ namespace currency
   {
     m_miner.on_synchronized();
   }
-  bool core::get_backward_blocks_sizes(uint64_t from_height, std::vector<size_t>& sizes, size_t count)
-  {
-    return m_blockchain_storage.get_backward_blocks_sizes(from_height, sizes, count);
-  }
+//  bool core::get_backward_blocks_sizes(uint64_t from_height, std::vector<size_t>& sizes, size_t count)
+//  {
+//    return m_blockchain_storage.get_backward_blocks_sizes(from_height, sizes, count);
+//  }
   //-----------------------------------------------------------------------------------------------
   bool core::add_new_block(const block& b, block_verification_context& bvc)
   {
     return m_blockchain_storage.add_new_block(b, bvc);
   }
+
+  //-----------------------------------------------------------------------------------------------
+  bool core::prepare_handle_incoming_blocks(const std::list<block_complete_entry> &blocks)
+  {
+#if BLOCKCHAIN_DB == DB_LMDB
+    m_blockchain_storage.prepare_handle_incoming_blocks(blocks);
+#endif
+    return true;
+  }
+
+  //-----------------------------------------------------------------------------------------------
+  bool core::cleanup_handle_incoming_blocks(bool force_sync)
+  {
+#if BLOCKCHAIN_DB == DB_LMDB
+    m_blockchain_storage.cleanup_handle_incoming_blocks(force_sync);
+#endif
+    return true;
+  }
+
   //-----------------------------------------------------------------------------------------------
   bool core::handle_incoming_block(const blobdata& block_blob, block_verification_context& bvc, bool update_miner_blocktemplate)
   {
@@ -479,7 +644,8 @@ namespace currency
   //-----------------------------------------------------------------------------------------------
   bool core::get_pool_transactions(std::list<transaction>& txs)
   {
-    return m_mempool.get_transactions(txs);
+    m_mempool.get_transactions(txs);
+    return true;
   }
   //-----------------------------------------------------------------------------------------------
   bool core::get_short_chain_history(std::list<crypto::hash>& ids)
@@ -497,7 +663,8 @@ namespace currency
     return m_blockchain_storage.get_block_id_by_height(height);
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::get_block_by_hash(const crypto::hash &h, block &blk) {
+  bool core::get_block_by_hash(const crypto::hash &h, block &blk)
+  {
     return m_blockchain_storage.get_block_by_hash(h, blk);
   }
   //-----------------------------------------------------------------------------------------------
@@ -531,9 +698,13 @@ namespace currency
         << "**********************************************************************");
       m_starter_message_showed = true;
     }
-
-    m_store_blockchain_interval.do_call([this](){return m_blockchain_storage.store_blockchain();});
-    m_prune_alt_blocks_interval.do_call([this](){return m_blockchain_storage.prune_aged_alt_blocks();});
+#if BLOCKCHAIN_DB == DB_LMDB
+    // m_store_blockchain_interval.do_call(boost::bind(&Blockchain::store_blockchain, &m_blockchain_storage));
+#else
+    m_store_blockchain_interval.do_call(boost::bind(&blockchain_storage::store_blockchain, &m_blockchain_storage));
+#endif
+    //m_store_blockchain_interval.do_call([this](){return m_blockchain_storage.store_blockchain();});
+//    m_prune_alt_blocks_interval.do_call([this](){return m_blockchain_storage.prune_aged_alt_blocks();});
     m_miner.on_idle();
     m_mempool.on_idle();
     return true;

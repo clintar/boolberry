@@ -31,6 +31,7 @@ namespace po = boost::program_options;
 
 #define EXTENDED_LOGS_FILE "wallet_details.log"
 
+unsigned int epee::g_test_dbg_lock_sleep = 0;
 
 namespace
 {
@@ -40,7 +41,7 @@ namespace
   const command_line::arg_descriptor<std::string> arg_daemon_address = { "daemon-address", "Use daemon instance at <host>:<port>", "" };
   const command_line::arg_descriptor<std::string> arg_daemon_host = {"daemon-host", "Use daemon instance at host <arg> instead of localhost", ""};
   const command_line::arg_descriptor<std::string> arg_password = {"password", "Wallet password", "", true};
-  const command_line::arg_descriptor<std::string> arg_restore_seed = { "restore-seed", "Restore wallet from the 24-word seed", "", true };
+  const command_line::arg_descriptor<std::string> arg_restore_seed = { "restore-seed", "Restore wallet from the 24-word seed", "" };
   const command_line::arg_descriptor<int> arg_daemon_port = { "daemon-port", "Use daemon instance at port <arg> instead of default", 0 };
   const command_line::arg_descriptor<uint32_t> arg_log_level = {"set_log", "", 0, true};
 

@@ -36,9 +36,12 @@ namespace currency
     const command_line::arg_descriptor<uint32_t>      arg_mining_threads =     {"mining-threads", "Specify mining threads count", 0, true};
     const command_line::arg_descriptor<std::string>   arg_set_donation_mode =  {"donation-vote", "Select one of two options for donations vote: \"true\"(to vote fore donation) or \"false\"(to vote against)", "", true};
   }
-
-
+          
+#if BLOCKCHAIN_DB == DB_LMDB
+  miner::miner(i_miner_handler* phandler, Blockchain& bc):m_stop(1),
+#else
   miner::miner(i_miner_handler* phandler, blockchain_storage& bc):m_stop(1),
+#endif
     m_bc(bc),
     m_template(boost::value_initialized<block>()),
     m_template_no(0),

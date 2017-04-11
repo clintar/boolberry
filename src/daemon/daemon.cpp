@@ -13,6 +13,8 @@ using namespace epee;
 
 #include <boost/program_options.hpp>
 
+unsigned int epee::g_test_dbg_lock_sleep = 0;
+
 #include "crypto/hash.h"
 #include "console_handler.h"
 #include "p2p/net_node.h"

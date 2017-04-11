@@ -22,6 +22,8 @@
 using namespace epee;
 namespace po = boost::program_options;
 
+unsigned int epee::g_test_dbg_lock_sleep = 0;
+
 int main(int argc, char** argv)
 {
   string_tools::set_module_name_and_folder(argv[0]);

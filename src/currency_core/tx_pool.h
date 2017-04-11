@@ -24,7 +24,11 @@ using namespace epee;
 
 namespace currency
 {
+#if BLOCKCHAIN_DB == DB_LMDB
+  class Blockchain;
+#else
   class blockchain_storage;
+#endif
   /************************************************************************/
   /*                                                                      */
   /************************************************************************/
@@ -32,7 +36,11 @@ namespace currency
   class tx_memory_pool: boost::noncopyable
   {
   public:
+#if BLOCKCHAIN_DB == DB_LMDB
+    tx_memory_pool(Blockchain& bchs);
+#else
     tx_memory_pool(blockchain_storage& bchs);
+#endif
     bool add_tx(const transaction &tx, const crypto::hash &id, tx_verification_context& tvc, bool keeped_by_block);
     bool add_tx(const transaction &tx, tx_verification_context& tvc, bool keeped_by_block);
     //gets tx and remove it from pool
@@ -111,7 +119,11 @@ namespace currency
     //transactions_container m_alternative_transactions;
 
     std::string m_config_folder;
+#if BLOCKCHAIN_DB == DB_LMDB
+    Blockchain& m_blockchain;
+#else
     blockchain_storage& m_blockchain;
+#endif
     /************************************************************************/
     /*                                                                      */
     /************************************************************************/

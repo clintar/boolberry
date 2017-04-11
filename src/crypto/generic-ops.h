@@ -17,7 +17,7 @@ namespace space { \
     return std::memcmp(&_v1, &_v2, sizeof(type)) != 0; \
   } \
 }
-
+        
 #define POD_MAKE_HASHABLE(space, type) \
  POD_MAKE_COMPARABLE(space, type) \
 namespace space { \

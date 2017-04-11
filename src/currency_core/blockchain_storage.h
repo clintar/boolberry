@@ -14,6 +14,8 @@
 #include <boost/foreach.hpp>
 #include <atomic>
 
+#include <unordered_map>
+#include <unordered_set>
 #include "tx_pool.h"
 #include "currency_basic.h"
 #include "common/util.h"
@@ -25,7 +27,9 @@
 #include "verification_context.h"
 #include "crypto/hash.h"
 #include "checkpoints.h"
-
+#ifndef BLOCKCHAIN_STORAGE
+#define BLOCKCHAIN_STORAGE 1
+#endif
 POD_MAKE_HASHABLE(currency, account_public_address);
 
 namespace currency
@@ -56,7 +60,7 @@ namespace currency
       uint64_t scratch_offset;
     };
 
-    blockchain_storage(tx_memory_pool& tx_pool);
+    blockchain_storage(tx_memory_pool* tx_pool);
 
     bool init() { return init(tools::get_default_data_dir()); }
     bool init(const std::string& config_folder);
@@ -101,6 +105,7 @@ namespace currency
     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, NOTIFY_RESPONSE_CHAIN_ENTRY::request& resp);
     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, uint64_t& starter_offset);
     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
+    bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
     bool handle_get_objects(NOTIFY_REQUEST_GET_OBJECTS::request& arg, NOTIFY_RESPONSE_GET_OBJECTS::request& rsp);
     bool handle_get_objects(const COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::request& req, COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::response& res);
     bool get_random_outs_for_amounts(const COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::request& req, COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::response& res);
@@ -116,7 +121,7 @@ namespace currency
     bool check_tx_inputs(const transaction& tx, const crypto::hash& tx_prefix_hash, uint64_t* pmax_used_block_height = NULL);
     bool check_tx_inputs(const transaction& tx, uint64_t* pmax_used_block_height = NULL);
     bool check_tx_inputs(const transaction& tx, uint64_t& pmax_used_block_height, crypto::hash& max_used_block_id);
-    uint64_t get_current_comulative_blocksize_limit();
+    uint64_t get_current_cumulative_blocksize_limit();
     uint64_t get_current_hashrate(size_t aprox_count);
     bool extport_scratchpad_to_file(const std::string& path);
     bool print_transactions_statistics();
@@ -161,7 +166,7 @@ namespace currency
         if(it == m_transactions.end())
         {
           transaction tx;
-          if(!m_tx_pool.get_transaction(tx_id, tx))
+          if(!m_tx_pool->get_transaction(tx_id, tx))
             missed_txs.push_back(tx_id);
           else
             txs.push_back(tx);
@@ -175,7 +180,13 @@ namespace currency
     void print_blockchain(uint64_t start_index, uint64_t end_index);
     void print_blockchain_index();
     void print_blockchain_outs(const std::string& file);
-
+    block get_block(uint64_t height) const { return m_blocks[height].bl; }
+    size_t get_block_size(uint64_t height) const { return m_blocks[height].block_cumulative_size; }
+    wide_difficulty_type get_block_cumulative_difficulty(uint64_t height) const { return m_blocks[height].cumulative_difficulty; }
+    uint64_t get_block_coins_generated(uint64_t height) const { return m_blocks[height].already_generated_coins; }
+    uint64_t get_block_coins_donated(uint64_t height) const { return m_blocks[height].already_donated_coins; }
+    uint64_t get_block_scratch_offset(uint64_t height) const { return m_blocks[height].scratch_offset; }
+    
   private:
     typedef std::unordered_map<crypto::hash, size_t> blocks_by_id_index;
     typedef std::unordered_map<crypto::hash, transaction_chain_entry> transactions_container;
@@ -187,7 +198,7 @@ namespace currency
     typedef std::map<std::string, std::list<alias_info_base>> aliases_container; //alias can be address address address + view key
     typedef std::unordered_map<account_public_address, std::string> address_to_aliases_container;
     
-    tx_memory_pool& m_tx_pool;
+    tx_memory_pool* m_tx_pool;
     critical_section m_blockchain_lock; // TODO: add here reader/writer lock
 
     // main chain

@@ -12,7 +12,7 @@ std::string dump_json(T &v)
 {
   std::stringstream ostr;
   json_archive<true> oar(ostr);
-  assert(serialization::serialize(oar, v));
+  assert(serialize(oar, v));
   return ostr.str();
 };
 

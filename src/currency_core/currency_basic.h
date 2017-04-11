@@ -25,6 +25,9 @@
 #include "tx_extra.h"
 #include "block_flags.h"
 
+#define DB_MEMORY 1
+#define DB_LMDB   2
+
 namespace currency
 {
 
