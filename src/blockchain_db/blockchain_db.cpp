@@ -54,7 +54,30 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
   else
   {
     tx_hash = *tx_hash_ptr;
-    LOG_PRINT_L3("not null tx_hash_ptr - needed to compute: ");
+  }
+
+  for (const txin_v& tx_input : tx.vin)
+  {
+    if (tx_input.type() == typeid(txin_to_key))
+    {
+      add_spent_key(boost::get<txin_to_key>(tx_input).k_image);
+    }
+    else if (tx_input.type() == typeid(txin_gen))
+    {
+      /* nothing to do here */
+    }
+    else
+    {
+      LOG_PRINT_L1("Unsupported input type, removing key images and aborting transaction addition");
+      for (const txin_v& tx_input : tx.vin)
+      {
+        if (tx_input.type() == typeid(txin_to_key))
+        {
+          remove_spent_key(boost::get<txin_to_key>(tx_input).k_image);
+        }
+      }
+      return;
+    }
   }
 
   add_transaction_data(blk_hash, tx, tx_hash);
@@ -64,14 +87,6 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
   for (uint64_t i = 0; i < tx.vout.size(); ++i)
   {
     add_output(tx_hash, tx.vout[i], i, tx.unlock_time);
-  }
-
-  for (const txin_v& tx_input : tx.vin)
-  {
-    if (tx_input.type() == typeid(txin_to_key))
-    {
-      add_spent_key(boost::get<txin_to_key>(tx_input).k_image);
-    }
   }
 }
 
@@ -84,6 +99,7 @@ uint64_t BlockchainDB::add_block( const block& blk
                                 , const uint64_t& scratch_offset
                                 )
 {
+    block_txn_start(false);
   TIME_MEASURE_START(time1);
   crypto::hash blk_hash = get_block_hash(blk);
   TIME_MEASURE_FINISH(time1);
@@ -92,7 +108,13 @@ uint64_t BlockchainDB::add_block( const block& blk
   tx_extra_info ei = AUTO_VAL_INIT(ei);
   parse_and_validate_tx_extra(blk.miner_tx, ei);
   //TODO Clintar Add alias
+  if(is_coinbase(blk.miner_tx) && ei.m_alias.m_alias.size())
+  {
+      LOG_PRINT_L1("Adding alias " << ei.m_alias.m_alias << " to db");
+    add_alias_info(ei.m_alias);
+  }
   // call out to subclass implementation to add the block & metadata
+
   time1 = epee::misc_utils::get_tick_count();
   add_block(blk, block_size, cumulative_difficulty, coins_generated, coins_donated, blk_hash, scratch_offset);
   TIME_MEASURE_FINISH(time1);
@@ -112,10 +134,14 @@ uint64_t BlockchainDB::add_block( const block& blk
   }
   TIME_MEASURE_FINISH(time1);
   time_add_transaction += time1;
+  // DB's new height based on this added block is only incremented after this
+  // function returns, so height() here returns the new previous height.
+  uint64_t prev_height = height();
 
+  block_txn_stop();
   ++num_calls;
 
-  return height();
+  return prev_height;
 }
 
 void BlockchainDB::pop_block(block& blk, std::vector<transaction>& txs)

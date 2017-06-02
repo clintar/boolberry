@@ -121,18 +121,15 @@ namespace currency
     bool prepare_handle_incoming_blocks(const std::list<block_complete_entry>  &blocks);
     bool cleanup_handle_incoming_blocks(bool force_sync = false);
 
-    template<class archive_t>
-    void serialize(archive_t & ar, const unsigned int version);
-
     bool have_tx(const crypto::hash &id) const;
     bool have_tx_keyimges_as_spent(const transaction &tx) const;
     bool have_tx_keyimg_as_spent(const crypto::key_image &key_im) const;
     bool get_transactions_daily_stat(uint64_t& daily_cnt, uint64_t& daily_volume) const;
     bool check_keyimages(const std::list<crypto::key_image>& images, std::list<bool>& images_stat);//true - unspent, false - spent
     bool get_alias_info(const std::string& alias, alias_info_base& info) const;
+    uint64_t get_aliases_count();
+    bool get_all_aliases(std::list<alias_info>& aliases) const;
     std::string get_alias_by_address(const account_public_address& addr);
-    uint64_t get_aliases_count() const;
-    bool get_all_aliases(std::list<alias_info>& aliases);
 
     template<class visitor_t>
     bool scan_outputkeys_for_indexes(const txin_to_key& tx_in_to_key, visitor_t& vis, uint64_t* pmax_related_block_height = NULL);
@@ -197,6 +194,9 @@ namespace currency
 
 	void block_longhash_worker(const uint64_t height, const std::vector<block> &blocks,
 			std::unordered_map<crypto::hash, crypto::hash> &map) const;
+        
+        void cancel();
+        
   private:
 
 
@@ -258,6 +258,8 @@ namespace currency
     std::atomic<bool> m_is_in_checkpoint_zone;
     std::atomic<bool> m_is_blockchain_storing;
     bool m_enforce_dns_checkpoints;
+    
+    std::atomic<bool> m_cancel;
 
     template<class visitor_t>
     inline bool scan_outputkeys_for_indexes(const txin_to_key& tx_in_to_key, visitor_t &vis, const crypto::hash &tx_prefix_hash, uint64_t* pmax_related_block_height = NULL) const;

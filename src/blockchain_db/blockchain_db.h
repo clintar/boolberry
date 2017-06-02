@@ -34,6 +34,7 @@
 #include "crypto/hash.h"
 #include "currency_core/currency_basic.h"
 #include "currency_core/difficulty.h"
+#include "currency_core/currency_format_utils.h"
 
 /* DB Driver Interface
  *
@@ -107,7 +108,6 @@
  *   index       get_random_output(amount)
  *   uint64_t    get_num_outputs(amount)
  *   pub_key     get_output_key(amount, index)
- *   tx_out      get_output(tx_hash, index)
  *   hash,index  get_output_tx_and_index_from_global(index)
  *   hash,index  get_output_tx_and_index(amount, index)
  *   vec<uint64> get_tx_output_indices(tx_hash)
@@ -165,6 +165,14 @@ class DB_EXCEPTION : public std::exception
     {
       return m.c_str();
     }
+};
+
+// For distinguishing errors trying to set up a DB txn from other errors
+class DB_ERROR_TXN_START : public DB_EXCEPTION
+{
+  public:
+    DB_ERROR_TXN_START() : DB_EXCEPTION("DB Error in starting txn") { }
+    DB_ERROR_TXN_START(const char* s) : DB_EXCEPTION(s) { }
 };
 
 class DB_ERROR : public DB_EXCEPTION
@@ -367,10 +375,32 @@ public:
 
   // release db lock
   virtual void unlock() = 0;
-
-  virtual void batch_start(uint64_t batch_num_blocks=0) = 0;
+  /**
+   * @brief tells the BlockchainDB to start a new "batch" of blocks
+   *
+   * If the subclass implements a batching method of caching blocks in RAM to
+   * be added to a backing store in groups, it should start a batch which will
+   * end either when <batch_num_blocks> has been added or batch_stop() has
+   * been called.  In either case, it should end the batch and write to its
+   * backing store.
+   *
+   * If a batch is already in-progress, this function must return false.
+   * If a batch was started by this call, it must return true.
+   *
+   * If any of this cannot be done, the subclass should throw the corresponding
+   * subclass of DB_EXCEPTION
+   *
+   * @param batch_num_blocks number of blocks to batch together
+   *
+   * @return true if we started the batch, false if already started
+   */
+  virtual bool batch_start(uint64_t batch_num_blocks=0) = 0;
   virtual void batch_stop() = 0;
   virtual void set_batch_transactions(bool) = 0;
+
+  virtual void block_txn_start(bool readonly=false) = 0;
+  virtual void block_txn_stop() = 0;
+  virtual void block_txn_abort() = 0;
 
   // adds a block with the given metadata to the top of the blockchain, returns the new height
   // NOTE: subclass implementations of this (or the functions it calls) need
@@ -465,6 +495,19 @@ public:
   // returns the total number of transactions in all blocks
   virtual uint64_t get_tx_count() const = 0;
 
+  // return true if an alias  with alias <alias> exists in the blockchain
+  virtual bool alias_exists(const std::string& alias) const = 0;
+  
+  // returns the total number of aliases in all blocks
+  virtual uint64_t get_aliases_count() const = 0;
+  
+  // returns alias info for an alias
+  virtual alias_info_base get_alias_info(const std::string& alias) const = 0;
+
+  // returns alias info for an alias
+  virtual bool add_alias_info(alias_info& info) = 0;
+
+  virtual bool get_all_aliases(std::list<alias_info>& aliases) const = 0;
   // return list of tx with hashes <hlist>.
   // TODO: decide if a missing hash means return empty list
   // or just skip that hash
@@ -482,9 +525,6 @@ public:
   // return public key for output with global output amount <amount> and index <index>
   virtual output_data_t get_output_key(const uint64_t& amount, const uint64_t& index) = 0;
   virtual output_data_t get_output_key(const uint64_t& global_index) const = 0;
-
-  // returns the output indexed by <index> in the transaction with hash <h>
-  virtual tx_out get_output(const crypto::hash& h, const uint64_t& index) const = 0;
 
   // returns the tx hash associated with an output, referenced by global output index
   virtual tx_out_index get_output_tx_and_index_from_global(const uint64_t& index) const = 0;

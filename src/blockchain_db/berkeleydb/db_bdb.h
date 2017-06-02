@@ -300,18 +300,6 @@ public:
   virtual output_data_t get_output_key(const uint64_t& amount, const uint64_t& index);
   virtual output_data_t get_output_key(const uint64_t& global_index) const;
   virtual void get_output_key(const uint64_t &amount, const std::vector<uint64_t> &offsets, std::vector<output_data_t> &outputs);
-  virtual tx_out get_output(const crypto::hash& h, const uint64_t& index) const;
-
-  /**
-   * @brief get an output from its global index
-   *
-   * @param index global index of the output desired
-   *
-   * @return the output associated with the index.
-   * Will throw OUTPUT_DNE if not output has that global index.
-   * Will throw DB_ERROR if there is a non-specific LMDB error in fetching
-   */
-  tx_out get_output(const uint64_t& index) const;
 
   virtual tx_out_index get_output_tx_and_index_from_global(const uint64_t& index) const;
   virtual void get_output_tx_and_index_from_global(const std::vector<uint64_t> &global_indices,
@@ -335,10 +323,14 @@ public:
                             );
 
   virtual void set_batch_transactions(bool batch_transactions);
-  virtual void batch_start(uint64_t batch_num_blocks=0);
+  virtual bool batch_start(uint64_t batch_num_blocks=0);
   virtual void batch_commit();
   virtual void batch_stop();
   virtual void batch_abort();
+
+  virtual void block_txn_start();
+  virtual void block_txn_stop();
+  virtual void block_txn_abort();
 
   virtual void pop_block(block& blk, std::vector<transaction>& txs);
 

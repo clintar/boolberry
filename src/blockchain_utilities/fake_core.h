@@ -98,9 +98,9 @@ struct fake_core_lmdb
     return m_storage.get_db().add_block(blk, block_size, cumulative_difficulty, coins_generated, coins_donated, txs, scratch_offset);
   }
 
-  void batch_start(uint64_t batch_num_blocks = 0)
+  bool batch_start(uint64_t batch_num_blocks = 0)
   {
-    m_storage.get_db().batch_start(batch_num_blocks);
+    return m_storage.get_db().batch_start(batch_num_blocks);
   }
 
   void batch_stop()

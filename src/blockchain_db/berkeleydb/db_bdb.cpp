@@ -1341,22 +1341,6 @@ output_data_t BlockchainBDB::get_output_key(const uint64_t& amount, const uint64
     return get_output_key(glob_index);
 }
 
-// As this is not used, its return is now a blank output.
-// This will save on space in the db.
-tx_out BlockchainBDB::get_output(const crypto::hash& h, const uint64_t& index) const
-{
-    LOG_PRINT_L3("BlockchainBDB::" << __func__);
-    return tx_out();
-}
-
-// As this is not used, its return is now a blank output.
-// This will save on space in the db.
-tx_out BlockchainBDB::get_output(const uint64_t& index) const
-{
-    LOG_PRINT_L3("BlockchainBDB::" << __func__);
-    return tx_out();
-}
-
 tx_out_index BlockchainBDB::get_output_tx_and_index(const uint64_t& amount, const uint64_t& index)
 {
     LOG_PRINT_L3("BlockchainBDB::" << __func__);
@@ -1511,9 +1495,10 @@ bool BlockchainBDB::has_key_image(const crypto::key_image& img) const
 // Ostensibly BerkeleyDB has batch transaction support built-in,
 // so the following few functions will be NOP.
 
-void BlockchainBDB::batch_start(uint64_t batch_num_blocks)
+bool BlockchainBDB::batch_start(uint64_t batch_num_blocks)
 {
     LOG_PRINT_L3("BlockchainBDB::" << __func__);
+    return false;
 }
 
 void BlockchainBDB::batch_commit()
@@ -1536,6 +1521,20 @@ void BlockchainBDB::set_batch_transactions(bool batch_transactions)
     LOG_PRINT_L3("BlockchainBDB::" << __func__);
     m_batch_transactions = batch_transactions;
     LOG_PRINT_L3("batch transactions " << (m_batch_transactions ? "enabled" : "disabled"));
+}
+void BlockchainBDB::block_txn_start()
+{
+  // TODO
+}
+
+void BlockchainBDB::block_txn_stop()
+{
+  // TODO
+}
+
+void BlockchainBDB::block_txn_abort()
+{
+  // TODO
 }
 
 uint64_t BlockchainBDB::add_block(const block& blk, const size_t& block_size, const wide_difficulty_type& cumulative_difficulty, const uint64_t& coins_generated, const uint64_t& coins_donated, const std::vector<transaction>& txs, const uint64_t& scratch_offset)

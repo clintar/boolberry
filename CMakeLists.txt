@@ -80,6 +80,9 @@ endif()
 if(BERKELEY_DB)
   add_definitions("-DBERKELEY_DB")
 endif()
+
+# Final setup for liblmdb
+include_directories(${LMDB_INCLUDE})
 	
 add_definitions("-DBLOCKCHAIN_DB=${BLOCKCHAIN_DB}")
 if (UNIX AND NOT APPLE)
@@ -104,7 +107,7 @@ else()
   else()
     set(ARCH_FLAG "-march=${ARCH}")
   endif()
-  set(WARNINGS "-Wall -Wextra -Wpointer-arith -Wundef -Wvla -Wwrite-strings -Werror -Wno-error=extra -Wno-error=deprecated-declarations -Wno-error=sign-compare -Wno-error=strict-aliasing -Wno-error=type-limits -Wno-unused-parameter -Wno-error=unused-variable -Wno-error=cpp")
+  set(WARNINGS "-Wall -Wextra -Wpointer-arith -Wundef -Wvla -Wwrite-strings -Wno-error=extra -Wno-error=deprecated-declarations -Wno-error=sign-compare -Wno-error=strict-aliasing -Wno-error=type-limits -Wno-unused-parameter -Wno-error=unused-variable -Wno-error=cpp")
   if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
     set(WARNINGS "${WARNINGS} -Wno-error=mismatched-tags -Wno-error=null-conversion -Wno-overloaded-shift-op-parentheses -Wno-error=shift-count-overflow -Wno-error=tautological-constant-out-of-range-compare -Wno-error=unused-private-field -Wno-error=unneeded-internal-declaration")
   else()

@@ -30,6 +30,7 @@
 
 #include "blockchain_db/blockchain_db.h"
 #include "currency_protocol/blobdatatype.h" // for type blobdata
+#include <boost/thread/tss.hpp>
 
 #include <lmdb.h>
 
@@ -37,10 +38,87 @@
 
 namespace currency
 {
+typedef struct mdb_txn_cursors
+{
+  MDB_cursor *m_txc_blocks;
+  MDB_cursor *m_txc_block_heights;
+  MDB_cursor *m_txc_block_hashes;
+  MDB_cursor *m_txc_block_timestamps;
+  MDB_cursor *m_txc_block_sizes;
+  MDB_cursor *m_txc_block_diffs;
+  MDB_cursor *m_txc_block_coins;
+  MDB_cursor *m_txc_block_donations;
+  MDB_cursor *m_txc_block_scratchpad_offsets;
+
+  MDB_cursor *m_txc_output_txs;
+  MDB_cursor *m_txc_output_indices;
+  MDB_cursor *m_txc_output_amounts;
+  MDB_cursor *m_txc_output_keys;
+
+  MDB_cursor *m_txc_txs;
+  MDB_cursor *m_txc_tx_heights;
+  MDB_cursor *m_txc_tx_unlocks;
+  MDB_cursor *m_txc_tx_outputs;
+
+  MDB_cursor *m_txc_spent_keys;
+
+  MDB_cursor *m_txc_hf_versions;
+} mdb_txn_cursors;
+
+#define m_cur_blocks	m_cursors->m_txc_blocks
+#define m_cur_block_heights	m_cursors->m_txc_block_heights
+#define m_cur_block_hashes	m_cursors->m_txc_block_hashes
+#define m_cur_block_timestamps	m_cursors->m_txc_block_timestamps
+#define m_cur_block_sizes	m_cursors->m_txc_block_sizes
+#define m_cur_block_diffs	m_cursors->m_txc_block_diffs
+#define m_cur_block_coins	m_cursors->m_txc_block_coins
+#define m_cur_block_donations	m_cursors->m_txc_block_donations
+#define m_cur_block_scratchpad_offsets	m_cursors->m_txc_block_scratchpad_offsets
+#define m_cur_output_txs	m_cursors->m_txc_output_txs
+#define m_cur_output_indices	m_cursors->m_txc_output_indices
+#define m_cur_output_amounts	m_cursors->m_txc_output_amounts
+#define m_cur_output_keys	m_cursors->m_txc_output_keys
+#define m_cur_txs	m_cursors->m_txc_txs
+#define m_cur_tx_heights	m_cursors->m_txc_tx_heights
+#define m_cur_tx_unlocks	m_cursors->m_txc_tx_unlocks
+#define m_cur_tx_outputs	m_cursors->m_txc_tx_outputs
+#define m_cur_spent_keys	m_cursors->m_txc_spent_keys
+#define m_cur_hf_versions	m_cursors->m_txc_hf_versions
+
+typedef struct mdb_rflags
+{
+  bool m_rf_txn;
+  bool m_rf_blocks;
+  bool m_rf_block_heights;
+  bool m_rf_block_hashes;
+  bool m_rf_block_timestamps;
+  bool m_rf_block_sizes;
+  bool m_rf_block_diffs;
+  bool m_rf_block_coins;
+  bool m_rf_output_txs;
+  bool m_rf_output_indices;
+  bool m_rf_output_amounts;
+  bool m_rf_output_keys;
+  bool m_rf_txs;
+  bool m_rf_tx_heights;
+  bool m_rf_tx_unlocks;
+  bool m_rf_tx_outputs;
+  bool m_rf_spent_keys;
+  bool m_rf_hf_versions;
+} mdb_rflags;
+
+typedef struct mdb_threadinfo
+{
+  MDB_txn *m_ti_rtxn;	// per-thread read txn
+  mdb_txn_cursors m_ti_rcursors;	// per-thread read cursors
+  mdb_rflags m_ti_rflags;	// per-thread read state
+
+  ~mdb_threadinfo();
+} mdb_threadinfo;
 
 struct mdb_txn_safe
 {
-  mdb_txn_safe();
+  mdb_txn_safe(const bool check=true);
   ~mdb_txn_safe();
 
   void commit(std::string message = "");
@@ -67,8 +145,10 @@ struct mdb_txn_safe
   static void wait_no_active_txns();
   static void allow_new_txns();
 
+  mdb_threadinfo* m_tinfo;
   MDB_txn* m_txn;
   bool m_batch_txn = false;
+  bool m_check;
   static std::atomic<uint64_t> num_active_txns;
 
   // could use a mutex here, but this should be sufficient.
@@ -156,7 +236,16 @@ public:
   virtual transaction get_tx(const crypto::hash& h) const;
 
   virtual uint64_t get_tx_count() const;
-
+  
+  virtual bool alias_exists(const std::string& alias) const;
+  
+  virtual uint64_t get_aliases_count() const;
+  
+  virtual alias_info_base get_alias_info(const std::string& alias) const;
+  
+  virtual bool add_alias_info(alias_info& info);
+  
+  virtual bool get_all_aliases(std::list<alias_info>& aliases) const;
   virtual std::vector<transaction> get_tx_list(const std::vector<crypto::hash>& hlist) const;
 
   virtual uint64_t get_tx_block_height(const crypto::hash& h) const;
@@ -168,19 +257,6 @@ public:
   virtual output_data_t get_output_key(const uint64_t& amount, const uint64_t& index);
   virtual output_data_t get_output_key(const uint64_t& global_index) const;
   virtual void get_output_key(const uint64_t &amount, const std::vector<uint64_t> &offsets, std::vector<output_data_t> &outputs);
-
-  virtual tx_out get_output(const crypto::hash& h, const uint64_t& index) const;
-
-  /**
-   * @brief get an output from its global index
-   *
-   * @param index global index of the output desired
-   *
-   * @return the output associated with the index.
-   * Will throw OUTPUT_DNE if not output has that global index.
-   * Will throw DB_ERROR if there is a non-specific LMDB error in fetching
-   */
-  tx_out get_output(const uint64_t& index) const;
 
   virtual tx_out_index get_output_tx_and_index_from_global(const uint64_t& index) const;
   virtual void get_output_tx_and_index_from_global(const std::vector<uint64_t> &global_indices,
@@ -205,10 +281,16 @@ public:
                             );
 
   virtual void set_batch_transactions(bool batch_transactions);
-  virtual void batch_start(uint64_t batch_num_blocks=0);
+  virtual bool batch_start(uint64_t batch_num_blocks=0);
   virtual void batch_commit();
   virtual void batch_stop();
   virtual void batch_abort();
+
+  virtual void block_txn_start(bool readonly);
+  virtual void block_txn_stop();
+  virtual void block_txn_abort();
+  virtual bool block_rtxn_start(MDB_txn **mtxn, mdb_txn_cursors **mcur) const;
+  virtual void block_rtxn_stop() const;
 
   virtual void pop_block(block& blk, std::vector<transaction>& txs);
 
@@ -239,10 +321,10 @@ private:
 
   virtual void remove_output(const tx_out& tx_output);
 
-  void remove_tx_outputs(const crypto::hash& tx_hash, const transaction& tx);
+  void remove_tx_outputs(const MDB_val *tx_hash, const transaction& tx);
 
-  void remove_output(const uint64_t& out_index, const uint64_t amount);
-  void remove_amount_output_index(const uint64_t amount, const uint64_t global_output_index);
+  void remove_output(const MDB_val *out_index, const uint64_t amount);
+  void remove_amount_output_index(const uint64_t amount, const MDB_val *global_output_index);
 
   virtual void add_spent_key(const crypto::key_image& k_image);
 
@@ -295,24 +377,31 @@ private:
   MDB_dbi m_tx_heights;
   MDB_dbi m_tx_outputs;
 
+  MDB_dbi m_aliases;
+
+  MDB_dbi m_addr_to_aliases;
+  
   MDB_dbi m_output_txs;
   MDB_dbi m_output_indices;
-  MDB_dbi m_output_gindices;
   MDB_dbi m_output_amounts;
   MDB_dbi m_output_keys;
-  MDB_dbi m_outputs;
 
   MDB_dbi m_spent_keys;
 
   uint64_t m_height;
   uint64_t m_num_outputs;
+  mutable uint64_t m_cum_size;	// used in batch size estimation
+  mutable int m_cum_count;
+  uint64_t m_num_aliases;
   std::string m_folder;
   mdb_txn_safe* m_write_txn; // may point to either a short-lived txn or a batch txn
   mdb_txn_safe* m_write_batch_txn; // persist batch txn outside of BlockchainLMDB
-
+  boost::thread::id m_writer;
   bool m_batch_transactions; // support for batch transactions
   bool m_batch_active; // whether batch transaction is in progress
-
+  
+  mdb_txn_cursors m_wcursors;
+  mutable boost::thread_specific_ptr<mdb_threadinfo> m_tinfo;
 #if defined(__arm__)
   // force a value so it can compile with 32-bit ARM
   constexpr static uint64_t DEFAULT_MAPSIZE = 1LL << 31;
