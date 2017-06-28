@@ -2767,6 +2767,14 @@ bool Blockchain::check_tx_input(const txin_to_key& txin, const crypto::hash& tx_
   }
   if (m_is_in_checkpoint_zone)
     return true;
+  
+  if (!crypto::validate_key_image(txin.k_image))
+  {
+    LOG_ERROR("Invalid key image: " << txin.k_image << ", amount: " << print_money(txin.amount) << ", tx: " << tx_prefix_hash);
+    if (m_blocks.size() > 780000) // unfortunately, there are invalid keyimages in blockchain, skip the checking for them
+      return false;
+  }
+ 
   CHECK_AND_ASSERT_MES(sig.size() == output_keys.size(), false, "internal error: tx signatures count=" << sig.size() << " mismatch with outputs keys count for inputs=" << output_keys.size());
   return true;
 }
