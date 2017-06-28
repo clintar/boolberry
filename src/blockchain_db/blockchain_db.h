@@ -1,21 +1,21 @@
-// Copyright (c) 2014, The Monero Project
-// 
+// Copyright (c) 2014-2016, The Monero Project
+//
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without modification, are
 // permitted provided that the following conditions are met:
-// 
+//
 // 1. Redistributions of source code must retain the above copyright notice, this list of
 //    conditions and the following disclaimer.
-// 
+//
 // 2. Redistributions in binary form must reproduce the above copyright notice, this list
 //    of conditions and the following disclaimer in the documentation and/or other
 //    materials provided with the distribution.
-// 
+//
 // 3. Neither the name of the copyright holder nor the names of its contributors may be
 //    used to endorse or promote products derived from this software without specific
 //    prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 // MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
@@ -27,6 +27,7 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef BLOCKCHAIN_DB_H
 #define BLOCKCHAIN_DB_H
+#pragma once
 
 #include <list>
 #include <string>
@@ -36,24 +37,60 @@
 #include "currency_core/difficulty.h"
 #include "currency_core/currency_format_utils.h"
 
-/* DB Driver Interface
+/** \file
+ * Cryptonote Blockchain Database Interface
  *
  * The DB interface is a store for the canonical block chain.
  * It serves as a persistent storage for the blockchain.
  *
- * For the sake of efficiency, the reference implementation will also
+ * For the sake of efficiency, a concrete implementation may also
  * store some blockchain data outside of the blocks, such as spent
  * transfer key images, unspent transaction outputs, etc.
  *
+ * Examples are as follows:
+ *
  * Transactions are duplicated so that we don't have to fetch a whole block
- * in order to fetch a transaction from that block.  If this is deemed
- * unnecessary later, this can change.
+ * in order to fetch a transaction from that block.
  *
  * Spent key images are duplicated outside of the blocks so it is quick
  * to verify an output hasn't already been spent
  *
  * Unspent transaction outputs are duplicated to quickly gather random
  * outputs to use for mixins
+ *
+ * Indices and Identifiers:
+ * The word "index" is used ambiguously throughout this code. It is
+ * particularly confusing when talking about the output or transaction
+ * tables since their indexing can refer to themselves or each other.
+ * I have attempted to clarify these usages here:
+ *
+ * Blocks, transactions, and outputs are all identified by a hash.
+ * For storage efficiency, a 64-bit integer ID is used instead of the hash
+ * inside the DB. Tables exist to map between hash and ID. A block ID is
+ * also referred to as its "height". Transactions and outputs generally are
+ * not referred to by ID outside of this module, but the tx ID is returned
+ * by tx_exists() and used by get_tx_amount_output_indices(). Like their
+ * corresponding hashes, IDs are globally unique.
+ *
+ * The remaining uses of the word "index" refer to local offsets, and are
+ * not globally unique. An "amount output index" N refers to the Nth output
+ * of a specific amount. An "output local index" N refers to the Nth output
+ * of a specific tx.
+ *
+ * Exceptions:
+ *   DB_ERROR -- generic
+ *   DB_OPEN_FAILURE
+ *   DB_CREATE_FAILURE
+ *   DB_SYNC_FAILURE
+ *   BLOCK_DNE
+ *   BLOCK_PARENT_DNE
+ *   BLOCK_EXISTS
+ *   BLOCK_INVALID -- considering making this multiple errors
+ *   TX_DNE
+ *   TX_EXISTS
+ *   OUTPUT_DNE
+ *   OUTPUT_EXISTS
+ *   KEY_IMAGE_EXISTS
  *
  * IMPORTANT:
  * A concrete implementation of this interface should populate these
@@ -135,21 +172,35 @@
 namespace currency
 {
 
-// typedef for convenience
+/** a pair of <transaction hash, output index>, typedef for convenience */
 typedef std::pair<crypto::hash, uint64_t> tx_out_index;
 
 #pragma pack(push, 1)
+/**
+ * @brief a struct containing output metadata
+ */
 struct output_data_t
 {
-	crypto::public_key pubkey;
-	uint64_t unlock_time;
-	uint64_t height;
+  crypto::public_key pubkey;       //!< the output's public key (for spend verification)
+  uint64_t           unlock_time;  //!< the output's unlock time (or height)
+  uint64_t           height;       //!< the height of the block which created the output
 };
 #pragma pack(pop)
-	
+#pragma pack(push, 1)
+struct tx_data_t
+{
+  uint64_t tx_id;
+  uint64_t unlock_time;
+  uint64_t block_id;
+};
+#pragma pack(pop)
+
 /***********************************
  * Exception Definitions
  ***********************************/
+/**
+ * @brief A base class for BlockchainDB exceptions
+ */
 class DB_EXCEPTION : public std::exception
 {
   private:
@@ -292,16 +343,16 @@ private:
   virtual void remove_block() = 0;
 
   // tells the subclass to store the transaction and its metadata
-  virtual void add_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash) = 0;
+  virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash) = 0;
 
   // tells the subclass to remove data about a transaction
   virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx) = 0;
 
   // tells the subclass to store an output
-  virtual void add_output(const crypto::hash& tx_hash, const tx_out& tx_output, const uint64_t& local_index, const uint64_t unlock_time) = 0;
+  virtual uint64_t add_output(const crypto::hash& tx_hash, const tx_out& tx_output, const uint64_t& local_index, const uint64_t unlock_time) = 0;
 
   // tells the subclass to remove an output
-  virtual void remove_output(const tx_out& tx_output) = 0;
+  virtual void add_tx_amount_output_indices(const uint64_t tx_id, const std::vector<uint64_t>& amount_output_indices) = 0;
 
   // tells the subclass to store a spent key
   virtual void add_spent_key(const crypto::key_image& k_image) = 0;
@@ -387,6 +438,10 @@ public:
    * If a batch is already in-progress, this function must return false.
    * If a batch was started by this call, it must return true.
    *
+   *    * It returns a tx ID, which is a mapping from the tx_hash. The tx ID
+   * is used in #add_tx_amount_output_indices().
+   *
+   * 
    * If any of this cannot be done, the subclass should throw the corresponding
    * subclass of DB_EXCEPTION
    *
@@ -394,7 +449,7 @@ public:
    *
    * @return true if we started the batch, false if already started
    */
-  virtual bool batch_start(uint64_t batch_num_blocks=0) = 0;
+  virtual void batch_start(uint64_t batch_num_blocks=0) = 0;
   virtual void batch_stop() = 0;
   virtual void set_batch_transactions(bool) = 0;
 
@@ -484,6 +539,7 @@ public:
 
   // return true if a transaction with hash <h> exists
   virtual bool tx_exists(const crypto::hash& h) const = 0;
+  virtual bool tx_exists(const crypto::hash& h, uint64_t& tx_id) const = 0;
 
   // return unlock time of tx with hash <h>
   virtual uint64_t get_tx_unlock_time(const crypto::hash& h) const = 0;
@@ -506,6 +562,8 @@ public:
 
   // returns alias info for an alias
   virtual bool add_alias_info(alias_info& info) = 0;
+  
+  virtual std::string get_alias_by_address(const account_public_address& addr) const = 0;
 
   virtual bool get_all_aliases(std::list<alias_info>& aliases) const = 0;
   // return list of tx with hashes <hlist>.
@@ -516,8 +574,6 @@ public:
   // returns height of block that contains transaction with hash <h>
   virtual uint64_t get_tx_block_height(const crypto::hash& h) const = 0;
 
-  // return global output index of a random output of amount <amount>
-  virtual uint64_t get_random_output(const uint64_t& amount) const = 0;
 
   // returns the total number of outputs of amount <amount>
   virtual uint64_t get_num_outputs(const uint64_t& amount) const = 0;
@@ -539,10 +595,10 @@ public:
 
   // return a vector of indices corresponding to the global output index for
   // each output in the transaction with hash <h>
-  virtual std::vector<uint64_t> get_tx_output_indices(const crypto::hash& h) const = 0;
+
   // return a vector of indices corresponding to the amount output index for
   // each output in the transaction with hash <h>
-  virtual std::vector<uint64_t> get_tx_amount_output_indices(const crypto::hash& h) const = 0;
+  virtual std::vector<uint64_t> get_tx_amount_output_indices(const uint64_t tx_id) const = 0;
 
   // returns true if key image <img> is present in spent key images storage
   virtual bool has_key_image(const crypto::key_image& img) const = 0;

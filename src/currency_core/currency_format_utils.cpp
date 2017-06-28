@@ -1170,6 +1170,16 @@ namespace currency
     return true;
   }
   //---------------------------------------------------------------
+  bool parse_and_validate_alias_info_from_blob(const blobdata& ai_blob, alias_info& ai)
+  {
+    std::stringstream ss;
+    ss << ai_blob;
+    binary_archive<false> ba(ss);
+    bool r = ::serialization::serialize(ba, ai);
+    CHECK_AND_ASSERT_MES(r, false, "Failed to parse alias from blob");
+    return true;
+  }
+  //---------------------------------------------------------------
   size_t get_object_blobsize(const transaction& t)
   {
     size_t prefix_blob = get_object_blobsize(static_cast<const transaction_prefix&>(t));
@@ -1190,6 +1200,11 @@ namespace currency
   blobdata block_to_blob(const block& b)
   {
     return t_serializable_object_to_blob(b);
+  }
+  //---------------------------------------------------------------
+  blobdata alias_info_to_blob(const alias_info& ai)
+  {
+    return t_serializable_object_to_blob(ai);
   }
   //---------------------------------------------------------------
   bool block_to_blob(const block& b, blobdata& b_blob)

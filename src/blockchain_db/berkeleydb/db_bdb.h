@@ -1,20 +1,20 @@
-// Copyright (c) 2014, The Monero Project
+// Copyright (c) 2014-2016, The Monero Project
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without modification, are
 // permitted provided that the following conditions are met:
-// 
+//
 // 1. Redistributions of source code must retain the above copyright notice, this list of
 //    conditions and the following disclaimer.
-// 
+//
 // 2. Redistributions in binary form must reproduce the above copyright notice, this list
 //    of conditions and the following disclaimer in the documentation and/or other
 //    materials provided with the distribution.
-// 
+//
 // 3. Neither the name of the copyright holder nor the names of its contributors may be
 //    used to endorse or promote products derived from this software without specific
 //    prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 // MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
@@ -31,6 +31,7 @@
 #include "currency_protocol/blobdatatype.h" // for type blobdata
 
 #include <unordered_map>
+#include <condition_variable>
 
 // ND: Enables multi-threaded bulk reads for when getting indices.
 //     TODO: Disabled for now, as it doesn't seem to provide noticeable improvements (??. Reason: TBD.
@@ -99,18 +100,18 @@ private:
 template <typename T>
 class bdb_safe_buffer
 {
-	// limit the number of buffers to 8
-	const size_t MaxAllowedBuffers = 8;
+  // limit the number of buffers to 8
+  const size_t MaxAllowedBuffers = 8;
 public:
     bdb_safe_buffer(size_t num_buffers, size_t count)
     {
-    	if(num_buffers > MaxAllowedBuffers)
-    		num_buffers = MaxAllowedBuffers;
-    	
-        set_count(num_buffers);
-        for (size_t i = 0; i < num_buffers; i++)
-            m_buffers.push_back((T) malloc(sizeof(T) * count));
-        m_buffer_count = count;
+      if(num_buffers > MaxAllowedBuffers)
+        num_buffers = MaxAllowedBuffers;
+
+      set_count(num_buffers);
+      for (size_t i = 0; i < num_buffers; i++)
+        m_buffers.push_back((T) malloc(sizeof(T) * count));
+      m_buffer_count = count;
     }
 
     ~bdb_safe_buffer()
@@ -129,7 +130,7 @@ public:
 
     T acquire_buffer()
     {
-        std::unique_lock<std::mutex> lock(m_lock);
+        boost::unique_lock<boost::mutex> lock(m_lock);
         m_cv.wait(lock, [&]{ return m_count > 0; });
 
         --m_count;
@@ -153,7 +154,7 @@ public:
 
     void release_buffer(T buffer)
     {
-        std::unique_lock<std::mutex> lock(m_lock);
+        boost::unique_lock<boost::mutex> lock(m_lock);
 
         assert(buffer != nullptr);
         auto it = m_buffer_map.find(buffer);
@@ -195,10 +196,10 @@ private:
     std::vector<T> m_buffers;
     std::unordered_map<T, size_t> m_buffer_map;
 
-    std::condition_variable m_cv;
+    boost::condition_variable m_cv;
     std::vector<bool> m_open_slot;
     size_t m_count;
-    std::mutex m_lock;
+    boost::mutex m_lock;
 
     size_t m_buffer_count;
 };
@@ -297,6 +298,7 @@ public:
 
   virtual uint64_t get_num_outputs(const uint64_t& amount) const;
 
+  virtual uint64_t get_indexing_base() const { return 1; }
   virtual output_data_t get_output_key(const uint64_t& amount, const uint64_t& index);
   virtual output_data_t get_output_key(const uint64_t& global_index) const;
   virtual void get_output_key(const uint64_t &amount, const std::vector<uint64_t> &offsets, std::vector<output_data_t> &outputs);
@@ -323,12 +325,12 @@ public:
                             );
 
   virtual void set_batch_transactions(bool batch_transactions);
-  virtual bool batch_start(uint64_t batch_num_blocks=0);
+  virtual void batch_start(uint64_t batch_num_blocks=0);
   virtual void batch_commit();
   virtual void batch_stop();
   virtual void batch_abort();
 
-  virtual void block_txn_start();
+  virtual void block_txn_start(bool readonly);
   virtual void block_txn_stop();
   virtual void block_txn_abort();
 
@@ -339,6 +341,14 @@ public:
 #else
   virtual bool can_thread_bulk_indices() const { return false; }
 #endif
+  /**
+   * @brief return a histogram of outputs on the blockchain
+   *
+   * @param amounts optional set of amounts to lookup
+   *
+   * @return a set of amount/instances
+   */
+  std::map<uint64_t, uint64_t> get_output_histogram(const std::vector<uint64_t> &amounts) const;
 
 private:
   virtual void add_block( const block& blk
@@ -352,11 +362,11 @@ private:
 
   virtual void remove_block();
 
-  virtual void add_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash);
+  virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash);
 
   virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx);
 
-  virtual void add_output(const crypto::hash& tx_hash, const tx_out& tx_output, const uint64_t& local_index, const uint64_t unlock_time);
+  virtual uint64_t add_output(const crypto::hash& tx_hash, const tx_out& tx_output, const uint64_t& local_index, const uint64_t unlock_time);
 
   virtual void remove_output(const tx_out& tx_output);
 
@@ -406,6 +416,11 @@ private:
   uint64_t get_output_global_index(const uint64_t& amount, const uint64_t& index);
   void checkpoint_worker() const;
   void check_open() const;
+  virtual bool is_read_only() const;
+
+  //
+  // fix up anything that may be wrong due to past bugs
+  virtual void fixup();
   bool m_run_checkpoint;
   std::unique_ptr<boost::thread> m_checkpoint_thread;
   typedef bdb_safe_buffer<void *> bdb_safe_buffer_t;
@@ -436,6 +451,7 @@ private:
 
   Db* m_hf_starting_heights;
   Db* m_hf_versions;
+  Db* m_properties;
 
   uint64_t m_height;
   uint64_t m_num_outputs;

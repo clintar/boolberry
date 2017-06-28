@@ -49,6 +49,13 @@ namespace currency
   struct alias_info: public alias_info_base
   {
     std::string m_alias;
+    BEGIN_SERIALIZE_OBJECT()
+      FIELDS(m_address)
+      FIELD(m_view_key)
+      FIELD(m_sign)
+      FIELD(m_text_comment)
+      FIELD(m_alias)
+    END_SERIALIZE()
   };
 
   struct tx_extra_info 
@@ -124,6 +131,7 @@ namespace currency
   crypto::hash get_block_hash(const block& b);
   bool generate_genesis_block(block& bl);
   bool parse_and_validate_block_from_blob(const blobdata& b_blob, block& b);
+  bool parse_and_validate_alias_info_from_blob(const blobdata& ai_blob, alias_info& ai);
   bool get_inputs_money_amount(const transaction& tx, uint64_t& money);
   uint64_t get_outs_money_amount(const transaction& tx);
   bool check_inputs_types_supported(const transaction& tx);
@@ -250,7 +258,7 @@ namespace currency
     b_blob = ss.str();
     return r;
   }
-  //---------------------------------------------------------------
+  //---------------------------------------------------------------  
   template<class t_object>
   blobdata t_serializable_object_to_blob(const t_object& to)
   {
@@ -346,6 +354,7 @@ namespace currency
   }
 
   blobdata block_to_blob(const block& b);
+  blobdata alias_info_to_blob(const alias_info& ai);
   bool block_to_blob(const block& b, blobdata& b_blob);
   blobdata tx_to_blob(const transaction& b);
   bool tx_to_blob(const transaction& b, blobdata& b_blob);

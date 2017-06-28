@@ -2322,7 +2322,7 @@ uint64_t Blockchain::get_aliases_count()
 
 bool Blockchain::get_all_aliases(std::list<alias_info>& aliases) const
 {
-  //  CRITICAL_REGION_LOCAL(m_blockchain_lock);
+  CRITICAL_REGION_LOCAL(m_blockchain_lock);
 
   m_db->get_all_aliases(aliases);
   return true;
@@ -2331,10 +2331,11 @@ bool Blockchain::get_all_aliases(std::list<alias_info>& aliases) const
 
 std::string Blockchain::get_alias_by_address(const account_public_address& addr)
 {
-  //  auto it = m_addr_to_alias.find(addr);
-  //  if (it != m_addr_to_alias.end())
-  //    return it->second;
-  //  
+  std::string str = m_db->get_alias_by_address(addr);
+  if(!str.empty())
+  {
+    return str;
+  }
   return "";
 }
 //------------------------------------------------------------------
@@ -2415,14 +2416,15 @@ bool Blockchain::get_tx_outputs_gindexs(const crypto::hash& tx_id, std::vector<u
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
-  if (!m_db->tx_exists(tx_id))
+  uint64_t tx_index;
+  if (!m_db->tx_exists(tx_id, tx_index))
   {
     LOG_PRINT_RED_L0("warning: get_tx_outputs_gindexs failed to find transaction with id = " << tx_id);
     return false;
   }
 
   // get amount output indexes, currently referred to in parts as "output global indices", but they are actually specific to amounts
-  indexs = m_db->get_tx_amount_output_indices(tx_id);
+  indexs = m_db->get_tx_amount_output_indices(tx_index);
   CHECK_AND_ASSERT_MES(indexs.size(), false, "internal error: global indexes for transaction " << tx_id << " is empty");
 
   return true;
@@ -3366,18 +3368,11 @@ bool Blockchain::prepare_handle_incoming_blocks(const std::list<block_complete_e
 {
   LOG_PRINT_YELLOW("Blockchain::" << __func__, LOG_LEVEL_3);
   TIME_MEASURE_START(prepare);
-  bool stop_batch;
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
 
   if (blocks_entry.size() == 0)
     return false;
 
-  while (!(stop_batch = m_db->batch_start(blocks_entry.size())))
-  {
-    m_blockchain_lock.unlock();
-    epee::misc_utils::sleep_no_w(1000);
-    m_blockchain_lock.lock();
-  }
   if ((m_db->height() + blocks_entry.size()) < m_blocks_hash_check.size())
     return true;
 
