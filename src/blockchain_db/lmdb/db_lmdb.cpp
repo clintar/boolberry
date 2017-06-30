@@ -45,7 +45,7 @@ using epee::string_tools::pod_to_hex;
 
 // Increase when the DB changes in a non backward compatible way, and there
 // is no automatic conversion, so that a full resync is needed.
-#define VERSION 1
+#define VERSION 0
 
 namespace
 {
@@ -1152,7 +1152,7 @@ void BlockchainLMDB::open(const std::string& filename, const int mdb_flags)
     txn.abort();
     mdb_env_close(m_env);
     m_open = false;
-    LOG_PRINT_RED_L0("Existing lmdb database is incompatible with this version.");
+    LOG_PRINT_RED_L0("Existing lmdb database is incompatible with this version. DB Version: " << *(const uint32_t*)v.mv_data << ", m_height: " << m_height << ".");
     LOG_PRINT_RED_L0("Please delete the existing database and resync.");
     return;
   }
@@ -1424,37 +1424,37 @@ alias_info_base BlockchainLMDB::get_alias_info(const std::string& alias) const
       throw0(DB_ERROR("Error attempting to retrieve alias from the db"));
       
   }
+  TXN_POSTFIX_RDONLY();
   blobdata bd;
   bd.assign(reinterpret_cast<char*>(result.mv_data), result.mv_size);
 
   alias_info ai;
   if (!parse_and_validate_alias_info_from_blob(bd, ai))
     throw0(DB_ERROR("Failed to parse block from blob retrieved from the db"));
-  TXN_POSTFIX_RDONLY();
+  
   return ai;
 
 }
 
 std::string BlockchainLMDB::get_alias_by_address(const account_public_address& addr) const
 {
-    LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
   check_open();
   TXN_PREFIX_RDONLY();
   RCURSOR(addr_to_aliases);
+  std::string ret = "";
   MDB_val_copy<account_public_address> addr_key(addr);
   MDB_val result;
   auto get_result = mdb_cursor_get(m_cur_addr_to_aliases, &addr_key, &result, MDB_SET);
-  if (get_result == MDB_NOTFOUND)
+  if (get_result && get_result != MDB_NOTFOUND)
   {
-    TXN_POSTFIX_RDONLY();
-    return "";
+    throw0(DB_ERROR(lmdb_error(std::string("Error attempting to retrieve alias from db by addr ") + currency::get_account_address_as_str(addr) + ": ", get_result).c_str()));
   }
-  else if (get_result)
+  else
   {
-      throw0(DB_ERROR("Error attempting to retrieve alias by addr from the db"));
+
+    ret.assign(reinterpret_cast<char*>(result.mv_data), result.mv_size);
   }
-  std::string ret;
-  ret.assign(reinterpret_cast<char*>(result.mv_data), result.mv_size);
 
   TXN_POSTFIX_RDONLY();
   return ret;
@@ -1464,28 +1464,26 @@ bool BlockchainLMDB::alias_exists(const std::string& alias) const
 {
   LOG_PRINT_L3("BlockchainLMDB::" << __func__);
   check_open();
-
-  mdb_txn_safe txn;
-  if (auto mdb_res = mdb_txn_begin(m_env, NULL, MDB_RDONLY, txn))
-    throw0(DB_ERROR(lmdb_error("Failed to create a transaction for the db: ", mdb_res).c_str()));
-
+  TXN_PREFIX_RDONLY();
+  RCURSOR(aliases);
   char *keystr = new char[alias.length() + 1];
   strcpy(keystr, alias.c_str());
   MDB_val key;
   key.mv_data = keystr;
   key.mv_size = alias.length() + 1;
   MDB_val result;
-  auto get_result = mdb_get(txn, m_aliases, &key, &result);
-  if (get_result == MDB_NOTFOUND)
+  bool alias_found = false;
+  
+  auto get_result = mdb_cursor_get(m_cur_aliases, &key, &result, MDB_SET);
+  if (get_result == 0)
+    alias_found = true;
+  else if (get_result != MDB_NOTFOUND)
+    throw0(DB_ERROR(lmdb_error(std::string("DB error attempting to check existence of alias ") + alias + ": ", get_result).c_str()));
+  TXN_POSTFIX_RDONLY();
+  if (! alias_found)
   {
-    txn.commit();
-    throw0(DB_ERROR(std::string("Attempt to get alias from db ").append(alias).append(" failed -- alias not in db").c_str()));
+    LOG_PRINT_L1("alias " << alias << " not found in db");
     return false;
-  }
-  else if (get_result)
-  {
-      txn.commit();
-      return false;
   }
   return true;
 
@@ -1951,22 +1949,18 @@ bool BlockchainLMDB::get_all_aliases(std::list<alias_info>& aliases_list) const
   uint64_t counter = 0;
   MDB_val k;
   MDB_val v;
-  auto result = mdb_cursor_get(m_cur_aliases, &k, &v, MDB_FIRST);
-  if (result == MDB_NOTFOUND)
+  
+  MDB_cursor_op op = MDB_FIRST;
+  while (1)
   {
-    throw0(DB_ERROR("Attempt to get aliases from db failed"));
-  }
-  else if (result)
-  {
-    throw0(DB_ERROR("DB error attempting to get an alias"));
-    
-  }
-  else
-  {
+    int ret = mdb_cursor_get(m_cur_aliases, &k, &v, op);
+    op = MDB_NEXT;
+    if (ret == MDB_NOTFOUND)
+      break;
+    if (ret)
+      throw0(DB_ERROR(lmdb_error("Failed to enumerate aliases: ", ret).c_str()));
     counter++;
-    do {
-        
-      blobdata bd;
+    blobdata bd;
       bd.assign(reinterpret_cast<char*>(v.mv_data), v.mv_size);
 
       alias_info ai;
@@ -1975,13 +1969,10 @@ bool BlockchainLMDB::get_all_aliases(std::list<alias_info>& aliases_list) const
 
       LOG_PRINT_L0("Alias address found:" << currency::get_account_address_as_str(ai.m_address));
       aliases_list.push_back(ai);
-      counter++;
-    } while (mdb_cursor_get(m_cur_aliases, &k, &v, MDB_NEXT) == 0);
-    TXN_POSTFIX_RDONLY();
-    return counter;
   }
+  
   TXN_POSTFIX_RDONLY();
-return 0;
+  return counter;
 }
 std::vector<transaction> BlockchainLMDB::get_tx_list(const std::vector<crypto::hash>& hlist) const
 {

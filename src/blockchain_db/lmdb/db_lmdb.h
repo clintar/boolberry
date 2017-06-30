@@ -45,6 +45,7 @@ typedef struct mdb_txn_cursors
   MDB_cursor *m_txc_block_info;
 
   MDB_cursor *m_txc_aliases;
+  MDB_cursor *m_txc_addr_to_aliases;
 
   MDB_cursor *m_txc_output_txs;
   MDB_cursor *m_txc_output_amounts;
@@ -63,7 +64,7 @@ typedef struct mdb_txn_cursors
 #define m_cur_block_heights	m_cursors->m_txc_block_heights
 #define m_cur_block_info	m_cursors->m_txc_block_info
 #define m_cur_aliases	m_cursors->m_txc_aliases
-#define m_cur_addr_to_aliases	m_cursors->m_txc_aliases
+#define m_cur_addr_to_aliases	m_cursors->m_txc_addr_to_aliases
 #define m_cur_output_txs	m_cursors->m_txc_output_txs
 #define m_cur_output_amounts	m_cursors->m_txc_output_amounts
 #define m_cur_txs	m_cursors->m_txc_txs

@@ -2308,7 +2308,7 @@ bool Blockchain::get_alias_info(const std::string& alias, alias_info_base& info)
     info = m_db->get_alias_info(alias);
   }
 
-  return true;
+    return true;
 }
 //------------------------------------------------------------------
 
@@ -2331,6 +2331,8 @@ bool Blockchain::get_all_aliases(std::list<alias_info>& aliases) const
 
 std::string Blockchain::get_alias_by_address(const account_public_address& addr)
 {
+  CRITICAL_REGION_LOCAL(m_blockchain_lock);
+  
   std::string str = m_db->get_alias_by_address(addr);
   if(!str.empty())
   {
