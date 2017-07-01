@@ -485,7 +485,6 @@ bool Blockchain::reset_and_set_genesis_block(const block& b)
   m_blocks.clear();
   m_blocks_index.clear();
   m_alternative_chains.clear();
-  m_outputs.clear();
   m_db->reset();
 
   block_verification_context bvc = boost::value_initialized<block_verification_context>();
@@ -2013,12 +2012,8 @@ bool Blockchain::find_blockchain_supplement(const std::list<crypto::hash>& qbloc
   {
     try
     {
-      split_height = m_db->get_block_height(*bl_it);
-      break;
-    }
-    catch (const BLOCK_DNE& e)
-    {
-      continue;
+      if (m_db->block_exists(*bl_it, &split_height))
+        break;
     }
     catch (const std::exception& e)
     {
@@ -2177,13 +2172,14 @@ bool Blockchain::find_blockchain_supplement(const std::list<crypto::hash>& qbloc
   {
     return false;
   }
-
+  m_db->block_txn_start(true);
   resp.total_height = get_current_blockchain_height();
   size_t count = 0;
   for (size_t i = resp.start_height; i < resp.total_height && count < BLOCKS_IDS_SYNCHRONIZING_DEFAULT_COUNT; i++, count++)
   {
     resp.m_block_ids.push_back(m_db->get_block_hash_from_height(i));
   }
+  m_db->block_txn_stop();
   return true;
 }
 //------------------------------------------------------------------
@@ -2215,6 +2211,7 @@ bool Blockchain::find_blockchain_supplement(const uint64_t req_start_block, cons
     }
   }
 
+  m_db->block_txn_start(true);
   total_height = get_current_blockchain_height();
   size_t count = 0;
   for (size_t i = start_height; i < total_height && count < max_count; i++, count++)
@@ -2225,6 +2222,7 @@ bool Blockchain::find_blockchain_supplement(const uint64_t req_start_block, cons
     get_transactions(blocks.back().first.tx_hashes, blocks.back().second, mis);
     CHECK_AND_ASSERT_MES(!mis.size(), false, "internal error, transaction from block not found");
   }
+  m_db->block_txn_stop();
   return true;
 }
 //------------------------------------------------------------------
@@ -2304,11 +2302,11 @@ bool Blockchain::get_alias_info(const std::string& alias, alias_info_base& info)
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   //TODO Clintar - check if alias exists first, return true if so, false if not
   if (m_db->alias_exists(alias))
-  {
     info = m_db->get_alias_info(alias);
-  }
+  else
+    return false;
 
-    return true;
+  return true;
 }
 //------------------------------------------------------------------
 
@@ -2601,7 +2599,7 @@ bool Blockchain::check_tx_inputs(const transaction& tx, uint64_t* pmax_used_bloc
 
     // make sure that output being spent matches up correctly with the
     // signature spending it.
-    TIME_MEASURE_START(aa);
+//    TIME_MEASURE_START(aa);
     if (!check_tx_input(in_to_key, tx_prefix_hash, tx.signatures[sig_index], pubkeys[sig_index], pmax_used_block_height))
     {
       it->second[in_to_key.k_image] = false;
@@ -2614,7 +2612,6 @@ bool Blockchain::check_tx_inputs(const transaction& tx, uint64_t* pmax_used_bloc
       return false;
     }
 
-    bool result;
     if (threads > 1)
     {
       // ND: Speedup
@@ -3357,7 +3354,7 @@ void Blockchain::output_scan_worker(const uint64_t amount, const std::vector<uin
 {
   try
   {
-    m_db->get_output_key(amount, offsets, outputs);
+    m_db->get_output_key(amount, offsets, outputs, true);
   }
   catch (const std::exception& e)
   {

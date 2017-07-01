@@ -470,7 +470,7 @@ public:
                             );
 
   // return true if a block with hash <h> exists in the blockchain
-  virtual bool block_exists(const crypto::hash& h) const = 0;
+  virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const = 0;
 
   // return block with hash <h>
   virtual block get_block(const crypto::hash& h) const = 0;
@@ -589,7 +589,7 @@ public:
   // return type is pair of tx hash and index
   virtual tx_out_index get_output_tx_and_index(const uint64_t& amount, const uint64_t& index) = 0;
   virtual void get_output_tx_and_index(const uint64_t& amount, const std::vector<uint64_t> &offsets, std::vector<tx_out_index> &indices) = 0;
-  virtual void get_output_key(const uint64_t &amount, const std::vector<uint64_t> &offsets, std::vector<output_data_t> &outputs) = 0;
+  virtual void get_output_key(const uint64_t &amount, const std::vector<uint64_t> &offsets, std::vector<output_data_t> &outputs, bool allow_partial = false) = 0;
   
   virtual bool can_thread_bulk_indices() const = 0;
 

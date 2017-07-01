@@ -115,7 +115,6 @@ uint64_t BlockchainDB::add_block( const block& blk
       LOG_PRINT_L1("Adding alias " << ei.m_alias.m_alias << " to db");
     add_alias_info(ei.m_alias);
   }
-  // call out to subclass implementation to add the block & metadata
 
   // call out to add the transactions
   time1 = epee::misc_utils::get_tick_count();
@@ -130,7 +129,8 @@ uint64_t BlockchainDB::add_block( const block& blk
   }
   TIME_MEASURE_FINISH(time1);
   time_add_transaction += time1;
-  
+
+  // call out to subclass implementation to add the block & metadata
   time1 = epee::misc_utils::get_tick_count();
   add_block(blk, block_size, cumulative_difficulty, coins_generated, coins_donated, blk_hash, scratch_offset);
   TIME_MEASURE_FINISH(time1);

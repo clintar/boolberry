@@ -1103,7 +1103,7 @@ void BlockchainBDB::unlock()
     check_open();
 }
 
-bool BlockchainBDB::block_exists(const crypto::hash& h) const
+bool BlockchainBDB::block_exists(const crypto::hash& h, uint64_t *height) const
 {
     LOG_PRINT_L3("BlockchainBDB::" << __func__);
     check_open();
@@ -1118,7 +1118,8 @@ bool BlockchainBDB::block_exists(const crypto::hash& h) const
     }
     else if (get_result)
         throw0(DB_ERROR("DB error attempting to fetch block index from hash"));
-
+    if (height)
+      *height = get_result - 1;
     return true;
 }
 
@@ -2052,6 +2053,8 @@ std::map<uint64_t, uint64_t> BlockchainBDB::get_output_histogram(const std::vect
 {
   LOG_PRINT_L3("BlockchainBDB::" << __func__);
   throw1(DB_ERROR("Not implemented."));
+  std::map<uint64_t, uint64_t> bull;
+  return bull;
 }
 
 

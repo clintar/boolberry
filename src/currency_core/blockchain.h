@@ -247,8 +247,6 @@ namespace currency
 
     // some invalid blocks
     blocks_ext_by_hash m_invalid_blocks;     // crypto::hash -> block_extended_info
-    outputs_container m_outputs;
-    aliases_container m_aliases;
     address_to_aliases_container m_addr_to_alias;
     std::vector<crypto::hash> m_scratchpad;
     uint64_t m_current_pruned_rs_height = 0;
