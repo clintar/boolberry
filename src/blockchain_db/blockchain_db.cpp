@@ -117,13 +117,7 @@ uint64_t BlockchainDB::add_block( const block& blk
   }
   // call out to subclass implementation to add the block & metadata
 
-  time1 = epee::misc_utils::get_tick_count();
-  add_block(blk, block_size, cumulative_difficulty, coins_generated, coins_donated, blk_hash, scratch_offset);
-  TIME_MEASURE_FINISH(time1);
-  time_add_block1 += time1;
-
   // call out to add the transactions
-  //add_alias
   time1 = epee::misc_utils::get_tick_count();
   add_transaction(blk_hash, blk.miner_tx);
   int tx_i = 0;
@@ -136,6 +130,12 @@ uint64_t BlockchainDB::add_block( const block& blk
   }
   TIME_MEASURE_FINISH(time1);
   time_add_transaction += time1;
+  
+  time1 = epee::misc_utils::get_tick_count();
+  add_block(blk, block_size, cumulative_difficulty, coins_generated, coins_donated, blk_hash, scratch_offset);
+  TIME_MEASURE_FINISH(time1);
+  time_add_block1 += time1;
+  
   // DB's new height based on this added block is only incremented after this
   // function returns, so height() here returns the new previous height.
   uint64_t prev_height = height();

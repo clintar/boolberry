@@ -239,7 +239,7 @@ namespace currency
     r = m_blockchain_storage.init(db);
 
     //bool show_time_stats = command_line::get_arg(vm, daemon_args::arg_show_time_stats) != 0;
-    bool show_time_stats = true;
+    bool show_time_stats = false;
     m_blockchain_storage.set_show_time_stats(show_time_stats);
     LOG_PRINT_L0("Loading scratchpad file: " << sp_folder.string() << " ...");
     m_blockchain_storage.import_scratchpad_from_file(scratchpad_path);

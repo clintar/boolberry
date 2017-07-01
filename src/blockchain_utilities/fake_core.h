@@ -153,14 +153,14 @@ struct fake_core_memory
     return 2;
   }
 
-  void batch_start(uint64_t batch_num_blocks = 0)
+  bool batch_start(uint64_t batch_num_blocks = 0)
   {
-    LOG_PRINT_L0("WARNING: [batch_start] opt_batch set, but this database doesn't support/need transactions - ignoring");
+    return m_storage.get_db().batch_start(batch_num_blocks);
   }
 
   void batch_stop()
   {
-    LOG_PRINT_L0("WARNING: [batch_stop] opt_batch set, but this database doesn't support/need transactions - ignoring");
+    m_storage.get_db().batch_stop();
   }
 
 };

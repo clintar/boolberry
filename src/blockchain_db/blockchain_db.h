@@ -449,7 +449,7 @@ public:
    *
    * @return true if we started the batch, false if already started
    */
-  virtual void batch_start(uint64_t batch_num_blocks=0) = 0;
+  virtual bool batch_start(uint64_t batch_num_blocks=0) = 0;
   virtual void batch_stop() = 0;
   virtual void set_batch_transactions(bool) = 0;
 
