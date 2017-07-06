@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2015, The Monero Project
+// Copyright (c) 2014-2017, The Monero Project and Boolberry Developers
 // 
 // All rights reserved.
 // 
@@ -681,6 +681,12 @@ bool Blockchain::import_scratchpad_from_file(const std::string& path)
   catch (const std::exception& e)
   {
     LOG_PRINT_L0("Failed to load scratchpad, error: " << e.what());
+    LOG_ERROR("On-disk scratchpad inconsistent, filling with scratchpad info from DB." );
+    m_scratchpad.resize(m_db->scratchsize());
+    for(uint64_t i = 0;i < m_db->scratchsize();i++)
+    {
+      m_scratchpad[i] = m_db->get_scratch(i);
+    }
     return false;
   }
   catch (...)
@@ -688,7 +694,15 @@ bool Blockchain::import_scratchpad_from_file(const std::string& path)
     LOG_PRINT_L0("Failed to load scratchpad, unknown error");
     return false;
   }
-
+  if(m_db->scratchsize() != m_scratchpad.size())
+  {
+    LOG_ERROR("On-disk scratchpad inconsistent, filling with scratchpad info from DB." );
+    m_scratchpad.resize(m_db->scratchsize());
+    for(uint64_t i = 0;i < m_db->scratchsize();i++)
+    {
+      m_scratchpad[i] = m_db->get_scratch(i);
+    }
+  }
   return true;
 }
 //------------------------------------------------------------------
@@ -1624,7 +1638,14 @@ bool Blockchain::handle_alternative_block(const block& b, const crypto::hash& id
       }
       else
       {
-        res = m_scratchpad[offset];
+        if(m_db->get_scratch(offset) != m_scratchpad[offset])
+        {
+          LOG_ERROR("scratchpads don't match at offset when handling alternative chains");
+          LOG_PRINT_L0("hash: " << m_db->get_scratch(offset));
+          LOG_PRINT_L0("hash: " << m_scratchpad[offset]);
+        }
+        // SCRATCH TO DB  res = m_scratchpad[offset];
+        res = m_db->get_scratch(offset);
       }
       auto it = alt_scratchppad_patch.find(offset);
       if (it != alt_scratchppad_patch.end())
@@ -2293,7 +2314,8 @@ size_t Blockchain::get_total_transactions() const
 uint64_t Blockchain::get_scratchpad_size()
 {
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
-  return m_scratchpad.size()*32;
+  return m_db->scratchsize() * 32;
+//  return m_scratchpad.size()*32;
 }
 //------------------------------------------------------------------
 
@@ -2944,10 +2966,22 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
     //            proof_of_work = it->second;
     //        }
     //        else
-    proof_of_work = get_block_longhash(bl, m_db->height(), [&](uint64_t index) -> crypto::hash&
+    
+    
+    // SCRATCH TO DB
+    // proof_of_work = get_block_longhash(bl, m_db->height(), [&](uint64_t index) -> crypto::hash&
+    proof_of_work = get_block_longhash(bl, m_db->height(), [&](uint64_t index) -> crypto::hash
     {
+      
 
-      return m_scratchpad[index % m_scratchpad.size()];
+      if(m_db->get_scratch(index % m_db->scratchsize()) != m_scratchpad[index % m_scratchpad.size()])
+      {
+        LOG_ERROR("scratchpads don't match");
+        LOG_PRINT_L0("modindex1 = " << index % m_db->scratchsize() << ", hash: " << m_db->get_scratch(index % m_db->scratchsize()));
+        LOG_PRINT_L0("modindex2 = " << index % m_scratchpad.size() << ", hash: " << m_scratchpad[index % m_scratchpad.size()]);
+      }
+      // SCRATCH TO DB  return m_scratchpad[index % m_scratchpad.size()];
+      return m_db->get_scratch(index % m_db->scratchsize());
     });
 
     // validate proof_of_work versus difficulty target
@@ -3145,7 +3179,7 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
   }
 
 #ifdef ENABLE_HASHING_DEBUG  
-  LOG_PRINT_L3("SCRATCHPAD_SHOT FOR H=" << bei.height + 1 << ENDL << dump_scratchpad(m_scratchpad));
+  LOG_PRINT_L3("SCRATCHPAD_SHOT FOR H=" << bei.height + 1 << ENDL << dump_scratchpad(m_db->scratchsize()));
 #endif
 
   update_next_cumulative_size_limit();
@@ -3156,12 +3190,14 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
 
   TIME_MEASURE_START(addblock);
   uint64_t new_height = 0;
-  LOG_PRINT_L1("add block info  " << block_size << ", " << cumulative_difficulty << ", " << already_generated_coins << ", " << already_donated_coins << ", tx size" << txs.size() << ", " << m_scratchpad.size());
+  // SCRATCH TO DB  LOG_PRINT_L1("add block info  " << block_size << ", " << cumulative_difficulty << ", " << already_generated_coins << ", " << already_donated_coins << ", tx size" << txs.size() << ", " << m_scratchpad.size());
+  LOG_PRINT_L1("add block info  " << block_size << ", " << cumulative_difficulty << ", " << already_generated_coins << ", " << already_donated_coins << ", tx size" << txs.size() << ", " << m_db->scratchsize());
   if (!bvc.m_verifivation_failed)
   {
     try
     {
-      new_height = m_db->add_block(bl, block_size, cumulative_difficulty, already_generated_coins, already_donated_coins, txs, m_scratchpad.size());
+      // SCRATCH TO DB  new_height = m_db->add_block(bl, block_size, cumulative_difficulty, already_generated_coins, already_donated_coins, txs, m_scratchpad.size());
+      new_height = m_db->add_block(bl, block_size, cumulative_difficulty, already_generated_coins, already_donated_coins, txs, m_db->scratchsize());
     }
     catch (const KEY_IMAGE_EXISTS& e)
     {
@@ -3294,9 +3330,18 @@ void Blockchain::block_longhash_worker(const uint64_t height, const std::vector<
       return;
     uint64_t ind_height = height;
     crypto::hash id = get_block_hash(block);
-    crypto::hash pow = get_block_longhash(block, ind_height, [&](uint64_t index) -> const crypto::hash&
+    // SCRATCH TO DB  crypto::hash pow = get_block_longhash(block, ind_height, [&](uint64_t index) -> const crypto::hash&
+    crypto::hash pow = get_block_longhash(block, ind_height, [&](uint64_t index) -> const crypto::hash
     {
-      return m_scratchpad[index % m_scratchpad.size()];
+      if(m_db->get_scratch(index % m_db->scratchsize()) != m_scratchpad[index % m_scratchpad.size()])
+      {
+        LOG_ERROR("scratchpads don't match");
+        LOG_PRINT_L0("modindex1 = " << index % m_db->scratchsize() << ", hash: " << m_db->get_scratch(index % m_db->scratchsize()));
+        LOG_PRINT_L0("modindex2 = " << index % m_scratchpad.size() << ", hash: " << m_scratchpad[index % m_scratchpad.size()]);
+      }
+      
+      // SCRATCH TO DB  return m_scratchpad[index % m_scratchpad.size()];
+      return m_db->get_scratch(index % m_db->scratchsize());
     });
     map.emplace(id, pow);
   }

@@ -57,7 +57,8 @@ typedef struct mdb_txn_cursors
 
   MDB_cursor *m_txc_spent_keys;
 
-  MDB_cursor *m_txc_hf_versions;
+  MDB_cursor *m_txc_scratch_buf;
+
 } mdb_txn_cursors;
 
 #define m_cur_blocks	m_cursors->m_txc_blocks
@@ -65,13 +66,14 @@ typedef struct mdb_txn_cursors
 #define m_cur_block_info	m_cursors->m_txc_block_info
 #define m_cur_aliases	m_cursors->m_txc_aliases
 #define m_cur_addr_to_aliases	m_cursors->m_txc_addr_to_aliases
+#define m_cur_scratch_buf	m_cursors->m_txc_scratch_buf
 #define m_cur_output_txs	m_cursors->m_txc_output_txs
 #define m_cur_output_amounts	m_cursors->m_txc_output_amounts
 #define m_cur_txs	m_cursors->m_txc_txs
 #define m_cur_tx_indices	m_cursors->m_txc_tx_indices
 #define m_cur_tx_outputs	m_cursors->m_txc_tx_outputs
 #define m_cur_spent_keys	m_cursors->m_txc_spent_keys
-#define m_cur_hf_versions	m_cursors->m_txc_hf_versions
+
 
 typedef struct mdb_rflags
 {
@@ -87,7 +89,7 @@ typedef struct mdb_rflags
   bool m_rf_tx_indices;
   bool m_rf_tx_outputs;
   bool m_rf_spent_keys;
-  bool m_rf_hf_versions;
+  bool m_rf_scratch_buf;
 } mdb_rflags;
 
 typedef struct mdb_threadinfo
@@ -229,7 +231,15 @@ public:
   
   virtual alias_info_base get_alias_info(const std::string& alias) const;
   
-  virtual bool add_alias_info(alias_info& info);
+  virtual bool update_scratch(uint64_t pos, crypto::hash &segment);
+
+  virtual bool push_scratch(crypto::hash &segment);
+
+  virtual crypto::hash get_scratch(uint64_t pos) const;
+
+  virtual uint64_t scratchsize() const;
+  
+  virtual bool add_alias_info(alias_info& info) const;
   
   virtual bool get_all_aliases(std::list<alias_info>& aliases) const;
   
@@ -360,6 +370,7 @@ private:
   MDB_dbi m_tx_outputs;
 
   MDB_dbi m_aliases;
+  MDB_dbi m_scratch_buf;
 
   MDB_dbi m_addr_to_aliases;
   
@@ -367,6 +378,7 @@ private:
   MDB_dbi m_output_amounts;
 
   MDB_dbi m_spent_keys;
+  
 
   MDB_dbi m_properties;
 

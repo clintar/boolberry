@@ -561,7 +561,15 @@ public:
   virtual alias_info_base get_alias_info(const std::string& alias) const = 0;
 
   // returns alias info for an alias
-  virtual bool add_alias_info(alias_info& info) = 0;
+  virtual bool add_alias_info(alias_info& info) const = 0;
+  
+  virtual bool update_scratch(uint64_t pos, crypto::hash &segment) = 0;
+
+  virtual bool push_scratch(crypto::hash &segment) = 0;
+
+  virtual crypto::hash get_scratch(uint64_t pos) const = 0;
+  
+  virtual uint64_t scratchsize() const = 0;
   
   virtual std::string get_alias_by_address(const account_public_address& addr) const = 0;
 

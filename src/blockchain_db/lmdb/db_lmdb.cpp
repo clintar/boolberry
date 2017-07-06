@@ -176,6 +176,8 @@ const char* const LMDB_OUTPUT_TXS = "output_txs";
 const char* const LMDB_OUTPUT_AMOUNTS = "output_amounts";
 const char* const LMDB_SPENT_KEYS = "spent_keys";
 
+const char* const LMDB_SCRATCH_BUF = "scratch_buf";
+
 const char* const LMDB_PROPERTIES = "properties";
 const char zerokey[8] = {0};
 const MDB_val zerokval = { sizeof(zerokey), (void *)zerokey };
@@ -1043,7 +1045,7 @@ void BlockchainLMDB::open(const std::string& filename, const int mdb_flags)
   // set up lmdb environment
   if ((result = mdb_env_create(&m_env)))
     throw0(DB_ERROR(lmdb_error("Failed to create lmdb environment: ", result).c_str()));
-  if ((result = mdb_env_set_maxdbs(m_env, 21)))
+  if ((result = mdb_env_set_maxdbs(m_env, 13)))
     throw0(DB_ERROR(lmdb_error("Failed to set max number of dbs: ", result).c_str()));
 
   size_t mapsize = DEFAULT_MAPSIZE;
@@ -1091,14 +1093,16 @@ void BlockchainLMDB::open(const std::string& filename, const int mdb_flags)
   lmdb_db_open(txn, LMDB_TX_OUTPUTS, MDB_INTEGERKEY | MDB_CREATE, m_tx_outputs, "Failed to open db handle for m_tx_outputs");
 
   lmdb_db_open(txn, LMDB_OUTPUT_TXS, MDB_INTEGERKEY | MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, m_output_txs, "Failed to open db handle for m_output_txs");
+
   lmdb_db_open(txn, LMDB_ALIASES, MDB_CREATE, m_aliases, "Failed to open db handle for m_aliases");
   lmdb_db_open(txn, LMDB_ALIASES_BY_ADDRESS, MDB_CREATE, m_addr_to_aliases, "Failed to open db handle for m_addr_to_aliases");
-  
+
+  lmdb_db_open(txn, LMDB_SCRATCH_BUF, MDB_INTEGERKEY | MDB_CREATE, m_scratch_buf, "Failed to open db handle for m_scratch_buf");  
 
   lmdb_db_open(txn, LMDB_OUTPUT_AMOUNTS, MDB_INTEGERKEY | MDB_DUPSORT | MDB_DUPFIXED | MDB_CREATE, m_output_amounts, "Failed to open db handle for m_output_amounts");
 
   lmdb_db_open(txn, LMDB_SPENT_KEYS, MDB_INTEGERKEY | MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, m_spent_keys, "Failed to open db handle for m_spent_keys");
-
+  
 
   lmdb_db_open(txn, LMDB_PROPERTIES, MDB_CREATE, m_properties, "Failed to open db handle for m_properties");
 
@@ -1108,10 +1112,11 @@ void BlockchainLMDB::open(const std::string& filename, const int mdb_flags)
   mdb_set_dupsort(txn, m_output_amounts, compare_uint64);
   mdb_set_dupsort(txn, m_output_txs, compare_uint64);
   mdb_set_dupsort(txn, m_block_info, compare_uint64);
-
+  
   mdb_set_compare(txn, m_properties, compare_string);
   mdb_set_compare(txn, m_aliases, compare_string);
-
+  mdb_set_compare(txn, m_scratch_buf, compare_uint64);
+  
   // get and keep current height
   MDB_stat db_stats;
   if ((result = mdb_stat(txn, m_blocks, &db_stats)))
@@ -1250,6 +1255,8 @@ void BlockchainLMDB::reset()
     throw0(DB_ERROR(lmdb_error("Failed to drop m_aliases: ", result).c_str()));
   if (auto result = mdb_drop(txn, m_addr_to_aliases, 0))
     throw0(DB_ERROR(lmdb_error("Failed to drop m_addr_to_aliases: ", result).c_str()));
+  if (auto result = mdb_drop(txn, m_scratch_buf, 0))
+    throw0(DB_ERROR(lmdb_error("Failed to drop m_scratch_buf: ", result).c_str()));
   
   // init with current version
   MDB_val_copy<const char*> k("version");
@@ -1408,7 +1415,74 @@ uint64_t BlockchainLMDB::get_block_height(const crypto::hash& h) const
   TXN_POSTFIX_RDONLY();
   return ret;
 }
-bool BlockchainLMDB::add_alias_info(alias_info& info)
+
+bool BlockchainLMDB::update_scratch(uint64_t pos, crypto::hash &segment)
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  mdb_txn_cursors *m_cursors = &m_wcursors;
+  pos ++;
+  CURSOR(scratch_buf)
+
+  MDB_val_set(key, pos);
+  MDB_val_copy<crypto::hash> data(segment);
+  auto aresult = mdb_cursor_put(m_cur_scratch_buf, &key, &data, 0);
+  if (aresult)
+    throw0(DB_ERROR(std::string("Failed to add scratchpad segment: ").append(mdb_strerror(aresult)).c_str()));
+  return true;
+}
+
+bool BlockchainLMDB::push_scratch(crypto::hash &segment)
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  mdb_txn_cursors *m_cursors = &m_wcursors;
+  uint64_t pos = scratchsize() + 1;
+  CURSOR(scratch_buf)
+
+  MDB_val_set(key, pos);
+  MDB_val_copy<crypto::hash> data(segment);
+  auto aresult = mdb_cursor_put(m_cur_scratch_buf, &key, &data, 0);
+  if (aresult)
+    throw0(DB_ERROR(std::string("Failed to add scratchpad segment: ").append(mdb_strerror(aresult)).c_str()));
+  return true;
+}
+
+crypto::hash BlockchainLMDB::get_scratch(uint64_t pos) const
+{
+    LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  TXN_PREFIX_RDONLY();
+  RCURSOR(scratch_buf);
+  uint64_t adjpos = pos + 1;
+
+  MDB_val_copy<uint64_t> key(adjpos);
+  MDB_val result;
+  auto get_result = mdb_cursor_get(m_cur_scratch_buf, &key, &result, MDB_SET);
+  if (get_result)
+    throw0(DB_ERROR(std::string("Failed to get scratchpad segment: ").append(mdb_strerror(get_result)).c_str()));
+  TXN_POSTFIX_RDONLY();
+  crypto::hash ret = *(const crypto::hash*)result.mv_data;
+  return ret;
+}
+
+uint64_t BlockchainLMDB::scratchsize() const
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  TXN_PREFIX_RDONLY();
+  int result;
+  RCURSOR(scratch_buf);
+
+  // get current height
+  MDB_stat db_stats;
+  if ((result = mdb_stat(m_txn, m_scratch_buf, &db_stats)))
+    throw0(DB_ERROR(lmdb_error("Failed to query m_blocks: ", result).c_str()));
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  return db_stats.ms_entries;
+}
+
+bool BlockchainLMDB::add_alias_info(alias_info& info) const
 {
   LOG_PRINT_L3("BlockchainLMDB::" << __func__);
   check_open();
@@ -1428,8 +1502,7 @@ bool BlockchainLMDB::add_alias_info(alias_info& info)
   result = mdb_put(*m_write_txn, m_addr_to_aliases, &addr_key, &key, 0);
   if (result)
     throw0(DB_ERROR(std::string("Failed to add address for alias to db transaction: ").append(mdb_strerror(result)).c_str()));
-  LOG_PRINT_L0("Alias " << info.m_alias << " added to db");
-  m_num_aliases++;
+//  LOG_PRINT_L0("Alias " << info.m_alias << " added to db");
   return true;
 }
 

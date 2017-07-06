@@ -116,7 +116,7 @@ namespace currency
     //std::string db_type = command_line::get_arg(vm, daemon_args::arg_db_type);
     std::string db_type = "lmdb";
     //std::string db_sync_mode = command_line::get_arg(vm, daemon_args::arg_db_sync_mode);
-    std::string db_sync_mode = "fastest:async:1000";
+    std::string db_sync_mode = "fastest:async:8000";
     //bool fast_sync = command_line::get_arg(vm, daemon_args::arg_fast_block_sync) != 0;
     bool fast_sync = true;
     //uint64_t blocks_threads = command_line::get_arg(vm, daemon_args::arg_prep_blocks_threads);
@@ -162,7 +162,7 @@ namespace currency
     const std::string filename = folder.string();
     // temporarily default to fastest:async:1000
     blockchain_db_sync_mode sync_mode = db_async;
-    uint64_t blocks_per_sync = 1000;
+    uint64_t blocks_per_sync = 8000;
 
     try
     {

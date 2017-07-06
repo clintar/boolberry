@@ -31,6 +31,7 @@
 #include "profile_tools.h"
 
 using epee::string_tools::pod_to_hex;
+using namespace epee;
 
 namespace currency
 {
@@ -109,10 +110,57 @@ uint64_t BlockchainDB::add_block( const block& blk
 
   tx_extra_info ei = AUTO_VAL_INIT(ei);
   parse_and_validate_tx_extra(blk.miner_tx, ei);
-  //TODO Clintar Add alias
+  
+  // Update Scratchpad, taken from 'bool push_block_scratchpad_data(const block& b, std::vector<crypto::hash>& scratchpd)'
+  std::map<uint64_t, crypto::hash> patch;
+  size_t inital_sz = scratchsize();
+  
+  if(currency::get_block_height(blk))
+  {
+    crypto::hash prev = blk.prev_id;
+    push_scratch(prev);
+  }
+    crypto::public_key tx_pub;
+    bool r = parse_and_validate_tx_extra(blk.miner_tx, tx_pub);
+    CHECK_AND_ASSERT_MES(r, false, "wrong miner tx in put_block_scratchpad_data: no one-time tx pubkey");
+    crypto::hash  pub = *reinterpret_cast<crypto::hash*>(&tx_pub);
+    push_scratch(pub);
+    crypto::hash treehash = get_tx_tree_hash(blk);
+    push_scratch(treehash);
+    
+    for(const auto& out: blk.miner_tx.vout)
+    {
+      CHECK_AND_ASSERT_MES(out.target.type() == typeid(txout_to_key), false, "wrong tx out type in coinbase!!!");
+      /*
+      tx outs possible to fill with nonrandom data, let's hash it with prev_tx to avoid nonrandom data in scratchpad
+      */
+      std::string blob;
+      string_tools::apped_pod_to_strbuff(blob, blk.prev_id);
+      string_tools::apped_pod_to_strbuff(blob, boost::get<txout_to_key>(out.target).key);
+      crypto::hash togetherhash = crypto::cn_fast_hash(blob.data(), blob.size());
+      push_scratch(togetherhash);
+    }
+    
+    size_t end_entry = scratchsize();
+    if(inital_sz != 0)
+    {
+      for(size_t i = inital_sz; i != end_entry; i++)
+      {
+        crypto::hash tmp = get_scratch(i);
+        size_t rnd_upd_ind = reinterpret_cast<const uint64_t*>(&tmp)[0] % inital_sz;
+        patch[rnd_upd_ind] = crypto::xor_pod(patch[rnd_upd_ind], get_scratch(i));
+      }
+    }
+    for(auto& p: patch)
+    {
+      crypto::hash last_xor = crypto::xor_pod(get_scratch(p.first), p.second);
+      update_scratch(p.first, last_xor);
+    }
+    
+  // Add Alias
   if(is_coinbase(blk.miner_tx) && ei.m_alias.m_alias.size())
   {
-      LOG_PRINT_L1("Adding alias " << ei.m_alias.m_alias << " to db");
+//    LOG_PRINT_L1("Adding alias " << ei.m_alias.m_alias << " to db");
     add_alias_info(ei.m_alias);
   }
 
