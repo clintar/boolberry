@@ -54,8 +54,9 @@ namespace currency
     m_blockchain_storage.set_checkpoints(std::move(chk_pts));
   }
   //-----------------------------------------------------------------------------------
-  void core::init_options(boost::program_options::options_description& /*desc*/)
+  void core::init_options(boost::program_options::options_description& desc)
   {
+    command_line::add_arg(desc, command_line::arg_fakechain);
   }
   //-----------------------------------------------------------------------------------------------
   std::string core::get_config_folder()
@@ -66,6 +67,7 @@ namespace currency
   bool core::handle_command_line(const boost::program_options::variables_map& vm)
   {
     m_config_folder = command_line::get_arg(vm, command_line::arg_data_dir);
+    m_fakechain = command_line::get_arg(vm, command_line::arg_fakechain);
     return true;
   }
   //-----------------------------------------------------------------------------------------------
@@ -115,12 +117,14 @@ namespace currency
 #if BLOCKCHAIN_DB == DB_LMDB
     //std::string db_type = command_line::get_arg(vm, daemon_args::arg_db_type);
     std::string db_type = "lmdb";
+    //TODO: Clintar add these to real command line options
     //std::string db_sync_mode = command_line::get_arg(vm, daemon_args::arg_db_sync_mode);
-    std::string db_sync_mode = "fastest:async:8000";
+    std::string db_sync_mode = "fastest:async:1000";
     //bool fast_sync = command_line::get_arg(vm, daemon_args::arg_fast_block_sync) != 0;
     bool fast_sync = true;
+    //TODO: Clintar add these to real command line options
     //uint64_t blocks_threads = command_line::get_arg(vm, daemon_args::arg_prep_blocks_threads);
-    uint64_t blocks_threads = 16;
+    uint64_t blocks_threads = 4;
 
     BlockchainDB* db = nullptr;
     uint64_t BDB_FAST_MODE = 0;
@@ -153,6 +157,8 @@ namespace currency
     sp_folder /= "/scratchpad.bin";
     const std::string scratchpad_path = sp_folder.string();
 
+    if (m_fakechain)
+      folder /= "fake";
 
     folder /= db->get_db_name();
 
@@ -235,8 +241,8 @@ namespace currency
 
     m_blockchain_storage.set_user_options(blocks_threads,
         blocks_per_sync, sync_mode, fast_sync);
-
-    r = m_blockchain_storage.init(db);
+    
+    r = m_blockchain_storage.init(db, m_fakechain);
 
     //bool show_time_stats = command_line::get_arg(vm, daemon_args::arg_show_time_stats) != 0;
     bool show_time_stats = false;

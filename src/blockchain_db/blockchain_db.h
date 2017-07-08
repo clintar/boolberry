@@ -468,7 +468,7 @@ public:
                             , const std::vector<transaction>& txs
                             , const uint64_t& scratch_offset
                             );
-
+virtual bool push_block_scratchpad_data_db(const block& blk);
   // return true if a block with hash <h> exists in the blockchain
   virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const = 0;
 

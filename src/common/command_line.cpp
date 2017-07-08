@@ -17,5 +17,10 @@ namespace command_line
   const arg_descriptor<int>         arg_log_level =    { "log-level", "", LOG_LEVEL_0 };
   const arg_descriptor<bool>        arg_console =      { "no-console", "Disable daemon console commands" };
   const arg_descriptor<bool>        arg_show_details = { "currency-details", "Display currency details" };
+    const command_line::arg_descriptor<bool> arg_fakechain  = {
+    "fakechain"
+  , "Use a fake chain for testing purposes."
+  , false
+  };
 
 }

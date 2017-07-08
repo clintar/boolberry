@@ -393,7 +393,6 @@ void wallet2::scan_tx_pool()
     //check if we have spendings
     uint64_t tx_money_spent_in_ins = 0;
     // check all outputs for spending (compare key images)
-    size_t i = 0;
     for(auto& in: tx.vin)
     {
       if (in.type() != typeid(currency::txin_to_key))
@@ -765,7 +764,7 @@ bool wallet2::is_transfer_unlocked(const transfer_details& td) const
   if(!is_tx_spendtime_unlocked(td.m_tx.unlock_time))
     return false;
 
-  if(td.m_block_height + DEFAULT_TX_SPENDABLE_AGE > m_blockchain.size())
+  if(td.m_block_height + CURRENCY_DEFAULT_TX_SPENDABLE_AGE > m_blockchain.size())
     return false;
 
   return true;

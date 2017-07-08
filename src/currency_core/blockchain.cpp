@@ -222,7 +222,7 @@ uint64_t Blockchain::get_current_blockchain_height() const
 //FIXME: possibly move this into the constructor, to avoid accidentally
 //       dereferencing a null BlockchainDB pointer
 
-bool Blockchain::init(BlockchainDB* db)
+bool Blockchain::init(BlockchainDB* db, const bool fakechain)
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
@@ -237,7 +237,7 @@ bool Blockchain::init(BlockchainDB* db)
     LOG_ERROR("Attempted to init Blockchain with unopened DB");
     return false;
   }
-
+  m_fakechain = fakechain;
   m_db = db;
 
   // if the blockchain is new, add the genesis block
@@ -280,7 +280,7 @@ bool Blockchain::init(BlockchainDB* db)
   m_async_pool.create_thread(boost::bind(&boost::asio::io_service::run, &m_async_service));
 
 #if defined(PER_BLOCK_CHECKPOINT)
-  if (m_fast_sync && !testnet && get_blocks_dat_start() != nullptr)
+  if (!m_fakechain && m_fast_sync && !testnet && get_blocks_dat_start() != nullptr)
   {
     if (get_blocks_dat_size() > 4)
     {
@@ -682,10 +682,14 @@ bool Blockchain::import_scratchpad_from_file(const std::string& path)
   {
     LOG_PRINT_L0("Failed to load scratchpad, error: " << e.what());
     LOG_ERROR("On-disk scratchpad inconsistent, filling with scratchpad info from DB." );
-    m_scratchpad.resize(m_db->scratchsize());
-    for(uint64_t i = 0;i < m_db->scratchsize();i++)
+    if(m_db->scratchsize())
     {
-      m_scratchpad[i] = m_db->get_scratch(i);
+      m_scratchpad.resize(m_db->scratchsize());
+      for(uint64_t i = 0;i < m_db->scratchsize();i++)
+      {
+        m_scratchpad[i] = m_db->get_scratch(i);
+      }
+      return true;
     }
     return false;
   }
@@ -694,7 +698,7 @@ bool Blockchain::import_scratchpad_from_file(const std::string& path)
     LOG_PRINT_L0("Failed to load scratchpad, unknown error");
     return false;
   }
-  if(m_db->scratchsize() != m_scratchpad.size())
+  if(m_db->scratchsize() && (m_db->scratchsize() != m_scratchpad.size()))
   {
     LOG_ERROR("On-disk scratchpad inconsistent, filling with scratchpad info from DB." );
     m_scratchpad.resize(m_db->scratchsize());
@@ -1638,14 +1642,7 @@ bool Blockchain::handle_alternative_block(const block& b, const crypto::hash& id
       }
       else
       {
-        if(m_db->get_scratch(offset) != m_scratchpad[offset])
-        {
-          LOG_ERROR("scratchpads don't match at offset when handling alternative chains");
-          LOG_PRINT_L0("hash: " << m_db->get_scratch(offset));
-          LOG_PRINT_L0("hash: " << m_scratchpad[offset]);
-        }
-        // SCRATCH TO DB  res = m_scratchpad[offset];
-        res = m_db->get_scratch(offset);
+        res = m_scratchpad[offset];
       }
       auto it = alt_scratchppad_patch.find(offset);
       if (it != alt_scratchppad_patch.end())
@@ -1925,14 +1922,14 @@ bool Blockchain::get_random_outs_for_amounts(const COMMAND_RPC_GET_RANDOM_OUTPUT
     // TODO: Clintar, should we do this?
     //        // ensure we don't include outputs that aren't yet eligible to be used
     //        // outpouts are sorted by height
-    //        while (num_outs > 0)
-    //        {
-    //          const tx_out_index toi = m_db->get_output_tx_and_index(amount, num_outs - 1);
-    //          const uint64_t height = m_db->get_tx_block_height(toi.first);
-    //          if (height + CURRENCY_DEFAULT_TX_SPENDABLE_AGE <= m_db->height())
-    //            break;
-    //          --num_outs;
-    //        }
+            while (num_outs > 0)
+            {
+              const tx_out_index toi = m_db->get_output_tx_and_index(amount, num_outs - 1);
+              const uint64_t height = m_db->get_tx_block_height(toi.first);
+              if (height + CURRENCY_DEFAULT_TX_SPENDABLE_AGE <= m_db->height())
+                break;
+              --num_outs;
+            }
     // create outs_for_amount struct and populate amount field
     COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::outs_for_amount& result_outs = *res.outs.insert(res.outs.end(), COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::outs_for_amount());
     result_outs.amount = amount;
@@ -2314,15 +2311,13 @@ size_t Blockchain::get_total_transactions() const
 uint64_t Blockchain::get_scratchpad_size()
 {
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
-  return m_db->scratchsize() * 32;
-//  return m_scratchpad.size()*32;
+  return m_scratchpad.size()*32;
 }
 //------------------------------------------------------------------
 
 bool Blockchain::get_alias_info(const std::string& alias, alias_info_base& info) const
 {
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
-  //TODO Clintar - check if alias exists first, return true if so, false if not
   if (m_db->alias_exists(alias))
     info = m_db->get_alias_info(alias);
   else
@@ -2970,18 +2965,9 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
     
     // SCRATCH TO DB
     // proof_of_work = get_block_longhash(bl, m_db->height(), [&](uint64_t index) -> crypto::hash&
-    proof_of_work = get_block_longhash(bl, m_db->height(), [&](uint64_t index) -> crypto::hash
+    proof_of_work = get_block_longhash(bl, m_db->height(), [&](uint64_t index) -> crypto::hash&
     {
-      
-
-      if(m_db->get_scratch(index % m_db->scratchsize()) != m_scratchpad[index % m_scratchpad.size()])
-      {
-        LOG_ERROR("scratchpads don't match");
-        LOG_PRINT_L0("modindex1 = " << index % m_db->scratchsize() << ", hash: " << m_db->get_scratch(index % m_db->scratchsize()));
-        LOG_PRINT_L0("modindex2 = " << index % m_scratchpad.size() << ", hash: " << m_scratchpad[index % m_scratchpad.size()]);
-      }
-      // SCRATCH TO DB  return m_scratchpad[index % m_scratchpad.size()];
-      return m_db->get_scratch(index % m_db->scratchsize());
+          return m_scratchpad[index % m_scratchpad.size()];
     });
 
     // validate proof_of_work versus difficulty target
@@ -3170,7 +3156,7 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
   if (m_db->height())
     cumulative_difficulty += m_db->get_block_cumulative_difficulty(m_db->height() - 1);
   //append to scratchpad
-  if (!bvc.m_verifivation_failed && !push_block_scratchpad_data(bl, m_scratchpad))
+  if (!bvc.m_verifivation_failed && !push_block_scratchpad_data(bl, m_scratchpad) && !m_db->push_block_scratchpad_data_db(bl))
   {
     LOG_ERROR("Internal error for block id: " << id << ": failed to put_block_scratchpad_data");
 
@@ -3179,7 +3165,7 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
   }
 
 #ifdef ENABLE_HASHING_DEBUG  
-  LOG_PRINT_L3("SCRATCHPAD_SHOT FOR H=" << bei.height + 1 << ENDL << dump_scratchpad(m_db->scratchsize()));
+  LOG_PRINT_L3("SCRATCHPAD_SHOT FOR H=" << bei.height + 1 << ENDL << dump_scratchpad(m_scratchpad));
 #endif
 
   update_next_cumulative_size_limit();
@@ -3190,14 +3176,12 @@ bool Blockchain::handle_block_to_main_chain(const block& bl, const crypto::hash&
 
   TIME_MEASURE_START(addblock);
   uint64_t new_height = 0;
-  // SCRATCH TO DB  LOG_PRINT_L1("add block info  " << block_size << ", " << cumulative_difficulty << ", " << already_generated_coins << ", " << already_donated_coins << ", tx size" << txs.size() << ", " << m_scratchpad.size());
-  LOG_PRINT_L1("add block info  " << block_size << ", " << cumulative_difficulty << ", " << already_generated_coins << ", " << already_donated_coins << ", tx size" << txs.size() << ", " << m_db->scratchsize());
+  LOG_PRINT_L1("add block info  " << block_size << ", " << cumulative_difficulty << ", " << already_generated_coins << ", " << already_donated_coins << ", tx size" << txs.size() << ", " << m_scratchpad.size());
   if (!bvc.m_verifivation_failed)
   {
     try
     {
-      // SCRATCH TO DB  new_height = m_db->add_block(bl, block_size, cumulative_difficulty, already_generated_coins, already_donated_coins, txs, m_scratchpad.size());
-      new_height = m_db->add_block(bl, block_size, cumulative_difficulty, already_generated_coins, already_donated_coins, txs, m_db->scratchsize());
+      new_height = m_db->add_block(bl, block_size, cumulative_difficulty, already_generated_coins, already_donated_coins, txs, m_scratchpad.size());
     }
     catch (const KEY_IMAGE_EXISTS& e)
     {
@@ -3330,18 +3314,9 @@ void Blockchain::block_longhash_worker(const uint64_t height, const std::vector<
       return;
     uint64_t ind_height = height;
     crypto::hash id = get_block_hash(block);
-    // SCRATCH TO DB  crypto::hash pow = get_block_longhash(block, ind_height, [&](uint64_t index) -> const crypto::hash&
-    crypto::hash pow = get_block_longhash(block, ind_height, [&](uint64_t index) -> const crypto::hash
+    crypto::hash pow = get_block_longhash(block, ind_height, [&](uint64_t index) -> const crypto::hash&
     {
-      if(m_db->get_scratch(index % m_db->scratchsize()) != m_scratchpad[index % m_scratchpad.size()])
-      {
-        LOG_ERROR("scratchpads don't match");
-        LOG_PRINT_L0("modindex1 = " << index % m_db->scratchsize() << ", hash: " << m_db->get_scratch(index % m_db->scratchsize()));
-        LOG_PRINT_L0("modindex2 = " << index % m_scratchpad.size() << ", hash: " << m_scratchpad[index % m_scratchpad.size()]);
-      }
-      
-      // SCRATCH TO DB  return m_scratchpad[index % m_scratchpad.size()];
-      return m_db->get_scratch(index % m_db->scratchsize());
+      return m_scratchpad[index % m_scratchpad.size()];
     });
     map.emplace(id, pow);
   }

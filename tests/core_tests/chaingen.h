@@ -473,6 +473,10 @@ inline bool do_replay_events(std::vector<test_event_entry>& events)
   if (!r)
     return false;
 
+  // hardcode a --fakechain option for tests
+  static const char * const fakechain[] = {"", "--fakechain"};
+  boost::program_options::store(boost::program_options::parse_command_line(2, fakechain, desc), vm);
+
   currency::currency_protocol_stub pr; //TODO: stub only for this kind of test, make real validation of relayed objects
   currency::core c(&pr);
   if (!c.init(vm))

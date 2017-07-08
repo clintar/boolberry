@@ -103,7 +103,7 @@ namespace currency
     typedef std::unordered_map<account_public_address, std::string> address_to_aliases_container;
     Blockchain(tx_memory_pool& tx_pool);
 
-    bool init(BlockchainDB* db);
+    bool init(BlockchainDB* db, const bool fakechain = false);
     bool deinit();
 
     void set_checkpoints(checkpoints&& chk_pts) { m_checkpoints = chk_pts; }
@@ -201,7 +201,7 @@ namespace currency
 
 
     BlockchainDB* m_db;
-
+    bool m_fakechain;
     tx_memory_pool& m_tx_pool;
     mutable epee::critical_section m_blockchain_lock; // TODO: add here reader/writer lock
 

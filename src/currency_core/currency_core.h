@@ -142,6 +142,8 @@ namespace currency
      math_helper::once_a_time_seconds<60*60*12, false> m_prune_alt_blocks_interval;
      friend class tx_validate_inputs;
      std::atomic<bool> m_starter_message_showed;
+     
+     bool m_fakechain;
    };
 }
 
