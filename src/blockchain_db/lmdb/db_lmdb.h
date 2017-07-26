@@ -178,13 +178,13 @@ public:
 
   virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const;
 
-  virtual block get_block(const crypto::hash& h) const;
-
   virtual uint64_t get_block_height(const crypto::hash& h) const;
 
   virtual block_header get_block_header(const crypto::hash& h) const;
 
-  virtual block get_block_from_height(const uint64_t& height) const;
+  virtual currency::blobdata get_block_blob(const crypto::hash& h) const;
+
+  virtual currency::blobdata get_block_blob_from_height(const uint64_t& height) const;
 
   virtual uint64_t get_block_timestamp(const uint64_t& height) const;
 
@@ -219,7 +219,7 @@ public:
 
   virtual uint64_t get_tx_unlock_time(const crypto::hash& h) const;
 
-  virtual transaction get_tx(const crypto::hash& h) const;
+  virtual bool get_tx_blob(const crypto::hash& h, currency::blobdata &tx) const;
 
   virtual uint64_t get_tx_count() const;
   
@@ -337,6 +337,8 @@ private:
 
   virtual void remove_spent_key(const crypto::key_image& k_image);
 
+  uint64_t num_outputs() const;
+  
   /**
    * @brief convert a tx output to a blob for storage
    *
@@ -386,7 +388,6 @@ private:
   uint64_t m_num_outputs;
   mutable uint64_t m_cum_size;	// used in batch size estimation
   mutable unsigned int m_cum_count;
-  uint64_t m_num_aliases;
   std::string m_folder;
   mdb_txn_safe* m_write_txn; // may point to either a short-lived txn or a batch txn
   mdb_txn_safe* m_write_batch_txn; // persist batch txn outside of BlockchainLMDB

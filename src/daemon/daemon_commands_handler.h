@@ -187,12 +187,12 @@ private:
   //--------------------------------------------------------------------------------
   bool print_block_by_height(uint64_t height)
   {
-    std::list<currency::block> blocks;
+    std::list<std::pair<currency::blobdata, currency::block>> blocks;
     m_srv.get_payload_object().get_core().get_blocks(height, 1, blocks);
 
     if (1 == blocks.size())
     {
-      currency::block& block = blocks.front();
+      currency::block& block = blocks.front().second;
       std::cout << "block_id: " << get_block_hash(block) << ENDL;
       print_as_json(block);
     }
@@ -218,14 +218,18 @@ private:
 
     std::list<crypto::hash> block_ids;
     block_ids.push_back(block_hash);
-    std::list<currency::block> blocks;
+    std::list<std::pair<currency::blobdata,currency::block>> blocks;
     std::list<crypto::hash> missed_ids;
     m_srv.get_payload_object().get_core().get_blocks(block_ids, blocks, missed_ids);
 
     if (1 == blocks.size())
     {
-      currency::block block = blocks.front();
-      print_as_json(block);
+      for(auto &block : blocks)
+      {
+        print_as_json(block.second);
+      }
+//      currency::block block = blocks.front();
+//      print_as_json(block.second);
     }
     else
     {

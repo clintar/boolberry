@@ -252,7 +252,9 @@ public:
 
   virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const;
 
-  virtual block get_block(const crypto::hash& h) const;
+  virtual currency::blobdata get_block_blob(const crypto::hash& h) const;
+  
+  virtual currency::blobdata get_block_blob_from_height(const uint64_t& height) const;
 
   virtual uint64_t get_block_height(const crypto::hash& h) const;
 

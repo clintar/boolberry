@@ -111,8 +111,8 @@ namespace currency
     bool prune_ring_signatures_if_need();
     bool prune_ring_signatures(uint64_t height, uint64_t& transactions_pruned, uint64_t& signatures_pruned);
     //bool push_new_block();
-    bool get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks, std::list<transaction>& txs) const;
-    bool get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks) const;
+    bool get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks, std::list<currency::blobdata>& txs) const;
+    bool get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks) const;
     bool get_alternative_blocks(std::list<block>& blocks) const;
     size_t get_alternative_blocks_count() const;
     crypto::hash get_block_id_by_height(uint64_t height) const;
@@ -151,7 +151,7 @@ namespace currency
     bool get_short_chain_history(std::list<crypto::hash>& ids) const;
     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, NOTIFY_RESPONSE_CHAIN_ENTRY::request& resp) const;
     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, uint64_t& starter_offset) const;
-    bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count) const;
+    bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<currency::blobdata, std::list<currency::blobdata> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count) const;
     bool handle_get_objects(NOTIFY_REQUEST_GET_OBJECTS::request& arg, NOTIFY_RESPONSE_GET_OBJECTS::request& rsp);
     bool handle_get_objects(const COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::request& req, COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::response& res);
     bool get_random_outs_for_amounts(const COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::request& req, COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::response& res) const;
@@ -168,6 +168,8 @@ namespace currency
     template<class t_ids_container, class t_blocks_container, class t_missed_container>
     bool get_blocks(const t_ids_container& block_ids, t_blocks_container& blocks, t_missed_container& missed_bs) const;
 
+    template<class t_ids_container, class t_tx_container, class t_missed_container>
+    bool get_transactions_blobs(const t_ids_container& txs_ids, t_tx_container& txs, t_missed_container& missed_txs) const;
     template<class t_ids_container, class t_tx_container, class t_missed_container>
     bool get_transactions(const t_ids_container& txs_ids, t_tx_container& txs, t_missed_container& missed_txs) const;
 
@@ -206,10 +208,9 @@ namespace currency
     mutable epee::critical_section m_blockchain_lock; // TODO: add here reader/writer lock
 
     // main chain
-    blocks_container m_blocks;               // height  -> block_extended_info
-    blocks_by_id_index m_blocks_index;       // crypto::hash -> height
+    //blocks_container m_blocks;               // height  -> block_extended_info
+//    blocks_by_id_index m_blocks_index;       // crypto::hash -> height
     transactions_container m_transactions;
-    key_images_container m_spent_keys;
     size_t m_current_block_cumul_sz_limit;
     
     account_keys m_donations_account;
@@ -269,7 +270,6 @@ namespace currency
     bool switch_to_alternative_blockchain(std::list<blocks_ext_by_hash::iterator>& alt_chain, bool discard_disconnected_chain);
     block pop_block_from_blockchain();
     bool purge_transaction_from_blockchain(const crypto::hash& tx_id);
-    bool purge_transaction_keyimages_from_blockchain(const transaction& tx, bool strict_check);
 
     bool handle_block_to_main_chain(const block& bl, block_verification_context& bvc);
     bool handle_block_to_main_chain(const block& bl, const crypto::hash& id, block_verification_context& bvc);

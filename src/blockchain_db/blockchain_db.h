@@ -33,6 +33,7 @@
 #include <string>
 #include <exception>
 #include "crypto/hash.h"
+#include "currency_protocol/blobdatatype.h"
 #include "currency_core/currency_basic.h"
 #include "currency_core/difficulty.h"
 #include "currency_core/currency_format_utils.h"
@@ -472,18 +473,30 @@ virtual bool push_block_scratchpad_data_db(const block& blk);
   // return true if a block with hash <h> exists in the blockchain
   virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const = 0;
 
-  // return block with hash <h>
-  virtual block get_block(const crypto::hash& h) const = 0;
 
   // return the height of the block with hash <h> on the blockchain,
   // throw if it doesn't exist
   virtual uint64_t get_block_height(const crypto::hash& h) const = 0;
+  virtual currency::blobdata get_block_blob(const crypto::hash& h) const = 0;
 
+  /**
+   * @brief fetches the block with the given hash
+   *
+   * Returns the requested block.
+   *
+   * If the block does not exist, the subclass should throw BLOCK_DNE
+   *
+   * @param h the hash to look for
+   *
+   * @return the block requested
+   */
+  block get_block(const crypto::hash& h) const;
+  
   // return header for block with hash <h>
   virtual block_header get_block_header(const crypto::hash& h) const = 0;
-
+  virtual currency::blobdata get_block_blob_from_height(const uint64_t& height) const = 0;
   // return block at height <height>
-  virtual block get_block_from_height(const uint64_t& height) const = 0;
+  block get_block_from_height(const uint64_t& height) const;
 
   // return timestamp of block at height <height>
   virtual uint64_t get_block_timestamp(const uint64_t& height) const = 0;
@@ -546,7 +559,11 @@ virtual bool push_block_scratchpad_data_db(const block& blk);
 
   // return tx with hash <h>
   // throw if no such tx exists
-  virtual transaction get_tx(const crypto::hash& h) const = 0;
+  transaction get_tx(const crypto::hash& h) const;
+
+  bool get_tx(const crypto::hash& h, transaction &tx) const;
+
+  virtual bool get_tx_blob(const crypto::hash& h, currency::blobdata &tx) const = 0;
 
   // returns the total number of transactions in all blocks
   virtual uint64_t get_tx_count() const = 0;

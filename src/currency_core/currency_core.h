@@ -57,14 +57,16 @@ namespace currency
      uint64_t get_current_blockchain_height();
      std::string get_config_folder();
      bool get_blockchain_top(uint64_t& heeight, crypto::hash& top_id);
-     bool get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks, std::list<transaction>& txs);
-     bool get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks);
+     bool get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks, std::list<currency::blobdata>& txs) const;
+     bool get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks) const;
+     bool get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks) const;
      template<class t_ids_container, class t_blocks_container, class t_missed_container>
-     bool get_blocks(const t_ids_container& block_ids, t_blocks_container& blocks, t_missed_container& missed_bs)
+     bool get_blocks(const t_ids_container& block_ids, t_blocks_container& blocks, t_missed_container& missed_bs) const
      {
        return m_blockchain_storage.get_blocks(block_ids, blocks, missed_bs);
      }
      crypto::hash get_block_id_by_height(uint64_t height);
+     bool get_transactions(const std::vector<crypto::hash>& txs_ids, std::list<currency::blobdata>& txs, std::list<crypto::hash>& missed_txs) const;
      bool get_transactions(const std::vector<crypto::hash>& txs_ids, std::list<transaction>& txs, std::list<crypto::hash>& missed_txs);
      bool get_block_by_hash(const crypto::hash &h, block &blk);
      void get_all_known_block_ids(std::list<crypto::hash> &main, std::list<crypto::hash> &alt, std::list<crypto::hash> &invalid);
@@ -82,7 +84,7 @@ namespace currency
      bool have_block(const crypto::hash& id);
      bool get_short_chain_history(std::list<crypto::hash>& ids);
      bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, NOTIFY_RESPONSE_CHAIN_ENTRY::request& resp);
-     bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
+     bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<currency::blobdata, std::list<currency::blobdata> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
      bool get_stat_info(core_stat_info& st_inf);
      bool get_backward_blocks_sizes(uint64_t from_height, std::vector<size_t>& sizes, size_t count);
      bool get_tx_outputs_gindexs(const crypto::hash& tx_id, std::vector<uint64_t>& indexs);

@@ -116,20 +116,20 @@ namespace currency
   bool core_rpc_server::on_get_blocks(const COMMAND_RPC_GET_BLOCKS_FAST::request& req, COMMAND_RPC_GET_BLOCKS_FAST::response& res, connection_context& cntx)
   {
     CHECK_CORE_READY();
-    std::list<std::pair<block, std::list<transaction> > > bs;
+    std::list<std::pair<currency::blobdata, std::list<currency::blobdata> > > bs;
     if(!m_core.find_blockchain_supplement(req.start_height, req.block_ids, bs, res.current_height, res.start_height, COMMAND_RPC_GET_BLOCKS_FAST_MAX_COUNT))
     {
       res.status = "Failed";
       return false;
     }
 
-    BOOST_FOREACH(auto& b, bs)
+    BOOST_FOREACH(auto& bd, bs)
     {
       res.blocks.resize(res.blocks.size()+1);
-      res.blocks.back().block = block_to_blob(b.first);
-      BOOST_FOREACH(auto& t, b.second)
+      res.blocks.back().block = bd.first;
+      BOOST_FOREACH(auto& t, bd.second)
       {
-        res.blocks.back().txs.push_back(tx_to_blob(t));
+        res.blocks.back().txs.push_back(t);
       }
     }
 
@@ -719,17 +719,17 @@ namespace currency
       --height;
     }
 
-    std::list<block> blocks;
+    std::list<std::pair<currency::blobdata,block>> blocks;
     r = m_core.get_blockchain_storage().get_blocks(height + 1, m_core.get_current_blockchain_height() - (height+1), blocks);
     CHECK_AND_ASSERT_MES(r, false, "failed to get blocks");
-    for(auto it = blocks.begin(); it!= blocks.end(); it++)
+    for(auto it : blocks)
     {
       res.push_back(mining::addendum());
-      res.back().hi.height = get_block_height(*it);
-      res.back().hi.block_id = string_tools::pod_to_hex(get_block_hash(*it));
-      res.back().prev_id = string_tools::pod_to_hex(it->prev_id);
+      res.back().hi.height = get_block_height(it.second);
+      res.back().hi.block_id = string_tools::pod_to_hex(get_block_hash(it.second));
+      res.back().prev_id = string_tools::pod_to_hex(it.second.prev_id);
       std::vector<crypto::hash> ad;
-      r = get_block_scratchpad_addendum(*it, ad);
+      r = get_block_scratchpad_addendum(it.second, ad);
       CHECK_AND_ASSERT_MES(r, false, "Failed to add block addendum");
       addendum_to_hexstr(ad, res.back().addm);      
     }

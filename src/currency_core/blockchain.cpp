@@ -318,7 +318,6 @@ bool Blockchain::init(BlockchainDB* db, const bool fakechain)
     }
   }
 #endif
-
   LOG_PRINT_GREEN("Blockchain initialized. last block: " << m_db->height() - 1 << ", " << epee::misc_utils::get_time_interval_string(timestamp_diff) << " time ago, current difficulty: " << get_difficulty_for_next_block(), LOG_LEVEL_0);
 
   return true;
@@ -455,19 +454,25 @@ bool Blockchain::prune_ring_signatures_if_need()
   {
     LOG_PRINT_CYAN("Started pruning of ring signatures...", LOG_LEVEL_0);
     uint64_t tx_count = 0, sig_count = 0;
-    std::list<block> blocks;
-    std::list<transaction> txs;
+    std::list<std::pair<currency::blobdata,block>> blocks;
+    std::list<currency::blobdata> txs;
     uint64_t end_height = m_checkpoints.get_top_checkpoint_height();
     if (m_db->height() < end_height)
     {
       end_height = m_db->height();
     }
     get_blocks(m_current_pruned_rs_height, end_height, blocks, txs);
-    for (auto& it : txs)
+    crypto::hash dummy_block_hash;
+    for (auto& block : blocks)
     {
-      sig_count += it.signatures.size();
-      it.signatures.clear();
-      ++tx_count;
+      for(const auto& h: block.second.tx_hashes)
+      {
+        auto it = m_db->get_tx(h);
+        sig_count += it.signatures.size();
+        it.signatures.clear();
+        // update_transaction_data(dummy_block_hash, it, h);
+        ++tx_count;
+      }
     }
     m_current_pruned_rs_height = m_checkpoints.get_top_checkpoint_height();
     LOG_PRINT_CYAN("Transaction pruning finished: " << sig_count << " signatures released in " << tx_count << " transactions.", LOG_LEVEL_0);
@@ -481,10 +486,8 @@ bool Blockchain::reset_and_set_genesis_block(const block& b)
   LOG_PRINT_L3("Blockchain::" << __func__);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   m_transactions.clear();
-  m_spent_keys.clear();
-  m_blocks.clear();
-  m_blocks_index.clear();
   m_alternative_chains.clear();
+  m_scratchpad.clear();
   m_db->reset();
 
   block_verification_context bvc = boost::value_initialized<block_verification_context>();
@@ -508,62 +511,6 @@ bool Blockchain::copy_scratchpad(std::string& dst)
   if (m_scratchpad.size())
   {
     dst.append(reinterpret_cast<const char*> (&m_scratchpad[0]), m_scratchpad.size() * 32);
-  }
-  return true;
-}
-//------------------------------------------------------------------
-//TODO: move to BlockchainDB subclass
-
-bool Blockchain::purge_transaction_keyimages_from_blockchain(const transaction& tx, bool strict_check)
-{
-  LOG_PRINT_L3("Blockchain::" << __func__);
-  CRITICAL_REGION_LOCAL(m_blockchain_lock);
-
-  struct purge_transaction_visitor : public boost::static_visitor<bool>
-  {
-    key_images_container& m_spent_keys;
-    bool m_strict_check;
-
-    purge_transaction_visitor(key_images_container& spent_keys, bool strict_check) :
-    m_spent_keys(spent_keys), m_strict_check(strict_check)
-    {
-    }
-
-    bool operator()(const txin_to_key& inp) const
-    {
-      //const crypto::key_image& ki = inp.k_image;
-      auto r = m_spent_keys.find(inp.k_image);
-      if (r != m_spent_keys.end())
-      {
-        m_spent_keys.erase(r);
-      }
-      else
-      {
-        CHECK_AND_ASSERT_MES(!m_strict_check, false, "purge_block_data_from_blockchain: key image in transaction not found");
-      }
-      return true;
-    }
-
-    bool operator()(const txin_gen& inp) const
-    {
-      return true;
-    }
-
-    bool operator()(const txin_to_script& tx) const
-    {
-      return false;
-    }
-
-    bool operator()(const txin_to_scripthash& tx) const
-    {
-      return false;
-    }
-  };
-
-  BOOST_FOREACH(const txin_v& in, tx.vin)
-  {
-    bool r = boost::apply_visitor(purge_transaction_visitor(m_spent_keys, strict_check), in);
-    CHECK_AND_ASSERT_MES(!strict_check || r, false, "failed to process purge_transaction_visitor");
   }
   return true;
 }
@@ -1746,7 +1693,7 @@ bool Blockchain::handle_alternative_block(const block& b, const crypto::hash& id
 }
 //------------------------------------------------------------------
 
-bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks, std::list<transaction>& txs) const
+bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks, std::list<currency::blobdata>& txs) const
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
@@ -1758,10 +1705,10 @@ bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<block
     return false;
   }
 
-  for (const block& blk : blocks)
+  for(const auto& blk : blocks)
   {
     std::list<crypto::hash> missed_ids;
-    get_transactions(blk.tx_hashes, txs, missed_ids);
+    get_transactions_blobs(blk.second.tx_hashes, txs, missed_ids);
     CHECK_AND_ASSERT_MES(!missed_ids.size(), false, "has missed transactions in own block in main blockchain");
   }
 
@@ -1769,7 +1716,7 @@ bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<block
 }
 //------------------------------------------------------------------
 
-bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks) const
+bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks) const
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
@@ -1778,7 +1725,12 @@ bool Blockchain::get_blocks(uint64_t start_offset, size_t count, std::list<block
 
   for (size_t i = start_offset; i < start_offset + count && i < m_db->height(); i++)
   {
-    blocks.push_back(m_db->get_block_from_height(i));
+    blocks.push_back(std::make_pair(m_db->get_block_blob_from_height(i), block()));
+    if (!parse_and_validate_block_from_blob(blocks.back().first, blocks.back().second))
+    {
+      LOG_ERROR("Invalid block");
+      return false;
+    }
   }
   return true;
 }
@@ -1792,19 +1744,21 @@ bool Blockchain::handle_get_objects(NOTIFY_REQUEST_GET_OBJECTS::request& arg, NO
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   m_db->block_txn_start(true);
   rsp.current_blockchain_height = get_current_blockchain_height();
-  std::list<block> blocks;
+  std::list<std::pair<currency::blobdata,block>> blocks;
   get_blocks(arg.blocks, blocks, rsp.missed_ids);
 
   for (const auto& bl: blocks)
   {
     std::list<crypto::hash> missed_tx_ids;
-    std::list<transaction> txs;
-    get_transactions(bl.tx_hashes, txs, missed_tx_ids);
+    std::list<currency::blobdata> txs;
+    // FIXME: s/rsp.missed_ids/missed_tx_id/ ?  Seems like rsp.missed_ids
+    //        is for missed blocks, not missed transactions as well.
+    get_transactions_blobs(bl.second.tx_hashes, txs, missed_tx_ids);
 
     if (missed_tx_ids.size() != 0)
     {
       LOG_ERROR("Error retrieving blocks, missed " << missed_tx_ids.size()
-          << " transactions for block with hash: " << get_block_hash(bl)
+          << " transactions for block with hash: " << get_block_hash(bl.second)
           << std::endl
       );
 
@@ -1819,17 +1773,17 @@ bool Blockchain::handle_get_objects(NOTIFY_REQUEST_GET_OBJECTS::request& arg, NO
     rsp.blocks.push_back(block_complete_entry());
     block_complete_entry& e = rsp.blocks.back();
     //pack block
-    e.block = t_serializable_object_to_blob(bl);
+    e.block = bl.first;
     //pack transactions
-    for (transaction& tx: txs)
-      e.txs.push_back(t_serializable_object_to_blob(tx));
+    for (const currency::blobdata& tx: txs)
+      e.txs.push_back(tx);
   }
   //get another transactions, if need
-  std::list<transaction> txs;
-  get_transactions(arg.txs, txs, rsp.missed_ids);
+  std::list<currency::blobdata> txs;
+  get_transactions_blobs(arg.txs, txs, rsp.missed_ids);
   //pack aside transactions
   for (const auto& tx: txs)
-    rsp.txs.push_back(t_serializable_object_to_blob(tx));
+    rsp.txs.push_back(tx);
 
   m_db->block_txn_stop();
   return true;
@@ -1863,7 +1817,7 @@ bool Blockchain::check_keyimages(const std::list<crypto::key_image>& images, std
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
   for (auto& ki : images)
   {
-    images_stat.push_back(m_spent_keys.count(ki) ? false : true);
+    images_stat.push_back(m_db->has_key_image(ki) ? false : true);
   }
   return true;
 }
@@ -2090,7 +2044,12 @@ bool Blockchain::get_blocks(const t_ids_container& block_ids, t_blocks_container
   {
     try
     {
-      blocks.push_back(m_db->get_block(block_hash));
+      blocks.push_back(std::make_pair(m_db->get_block_blob(block_hash), block()));
+      if (!parse_and_validate_block_from_blob(blocks.back().first, blocks.back().second))
+      {
+        LOG_ERROR("Invalid block");
+        return false;
+      }
     }
     catch (const BLOCK_DNE& e)
     {
@@ -2106,6 +2065,30 @@ bool Blockchain::get_blocks(const t_ids_container& block_ids, t_blocks_container
 //------------------------------------------------------------------
 
 template<class t_ids_container, class t_tx_container, class t_missed_container>
+bool Blockchain::get_transactions_blobs(const t_ids_container& txs_ids, t_tx_container& txs, t_missed_container& missed_txs) const
+{
+  LOG_PRINT_L3("Blockchain::" << __func__);
+  CRITICAL_REGION_LOCAL(m_blockchain_lock);
+
+  for (const auto& tx_hash : txs_ids)
+  {
+    try
+    {
+      currency::blobdata tx;
+      if (m_db->get_tx_blob(tx_hash, tx))
+        txs.push_back(std::move(tx));
+      else
+        missed_txs.push_back(tx_hash);
+    } //FIXME: is this the correct way to handle this?
+    catch (const std::exception& e)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+//------------------------------------------------------------------
+template<class t_ids_container, class t_tx_container, class t_missed_container>
 bool Blockchain::get_transactions(const t_ids_container& txs_ids, t_tx_container& txs, t_missed_container& missed_txs) const
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
@@ -2115,12 +2098,19 @@ bool Blockchain::get_transactions(const t_ids_container& txs_ids, t_tx_container
   {
     try
     {
-      txs.push_back(m_db->get_tx(tx_hash));
+      currency::blobdata tx;
+      if (m_db->get_tx_blob(tx_hash, tx))
+      {
+        txs.push_back(transaction());
+        if (!parse_and_validate_tx_from_blob(tx, txs.back()))
+        {
+          LOG_ERROR("Invalid transaction");
+          return false;
+        }
+      }
+      else
+        missed_txs.push_back(tx_hash);
     }
-    catch (const TX_DNE& e)
-    {
-      missed_txs.push_back(tx_hash);
-    } //FIXME: is this the correct way to handle this?
     catch (const std::exception& e)
     {
       return false;
@@ -2206,7 +2196,7 @@ bool Blockchain::find_blockchain_supplement(const std::list<crypto::hash>& qbloc
 // blockchain height <req_start_block>), and return up to max_count FULL
 // blocks by reference.
 
-bool Blockchain::find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count) const
+bool Blockchain::find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<currency::blobdata, std::list<currency::blobdata> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count) const
 {
   LOG_PRINT_L3("Blockchain::" << __func__);
   CRITICAL_REGION_LOCAL(m_blockchain_lock);
@@ -2235,9 +2225,11 @@ bool Blockchain::find_blockchain_supplement(const uint64_t req_start_block, cons
   for (size_t i = start_height; i < total_height && count < max_count; i++, count++)
   {
     blocks.resize(blocks.size() + 1);
-    blocks.back().first = m_db->get_block_from_height(i);
+    blocks.back().first = m_db->get_block_blob_from_height(i);
+    block b;
+    CHECK_AND_ASSERT_MES(parse_and_validate_block_from_blob(blocks.back().first, b), false, "internal error, invalid block");
     std::list<crypto::hash> mis;
-    get_transactions(blocks.back().first.tx_hashes, blocks.back().second, mis);
+    get_transactions_blobs(b.tx_hashes, blocks.back().second, mis);
     CHECK_AND_ASSERT_MES(!mis.size(), false, "internal error, transaction from block not found");
   }
   m_db->block_txn_stop();
@@ -2787,7 +2779,7 @@ bool Blockchain::check_tx_input(const txin_to_key& txin, const crypto::hash& tx_
   if (!crypto::validate_key_image(txin.k_image))
   {
     LOG_ERROR("Invalid key image: " << txin.k_image << ", amount: " << print_money(txin.amount) << ", tx: " << tx_prefix_hash);
-    if (m_blocks.size() > 780000) // unfortunately, there are invalid keyimages in blockchain, skip the checking for them
+    if (m_db->height() > 780000) // unfortunately, there are invalid keyimages in blockchain, skip the checking for them
       return false;
   }
  
@@ -3724,4 +3716,7 @@ void Blockchain::set_user_options(uint64_t maxthreads, uint64_t blocks_per_sync,
   m_fast_sync = fast_sync;
   m_db_blocks_per_sync = blocks_per_sync;
   m_max_prepare_blocks_threads = maxthreads;
+}
+namespace currency {
+template bool Blockchain::get_transactions(const std::vector<crypto::hash>&, std::list<transaction>&, std::list<crypto::hash>&) const;
 }

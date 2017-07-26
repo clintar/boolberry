@@ -1123,12 +1123,12 @@ bool BlockchainBDB::block_exists(const crypto::hash& h, uint64_t *height) const
     return true;
 }
 
-block BlockchainBDB::get_block(const crypto::hash& h) const
+currency::blobdata BlockchainBDB::get_block_blob(const crypto::hash& h) const
 {
     LOG_PRINT_L3("BlockchainBDB::" << __func__);
     check_open();
 
-    return get_block_from_height(get_block_height(h));
+    return get_block_blob_from_height(get_block_height(h));
 }
 
 uint64_t BlockchainBDB::get_block_height(const crypto::hash& h) const

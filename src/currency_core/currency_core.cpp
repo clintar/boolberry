@@ -82,15 +82,31 @@ namespace currency
     return true;
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks, std::list<transaction>& txs)
+  bool core::get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks, std::list<currency::blobdata>& txs) const
   {
     return m_blockchain_storage.get_blocks(start_offset, count, blocks, txs);
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks)
+  bool core::get_blocks(uint64_t start_offset, size_t count, std::list<std::pair<currency::blobdata,block>>& blocks) const
   {
     return m_blockchain_storage.get_blocks(start_offset, count, blocks);
-  }  //-----------------------------------------------------------------------------------------------
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::get_blocks(uint64_t start_offset, size_t count, std::list<block>& blocks) const
+  {
+    std::list<std::pair<currency::blobdata, currency::block>> bs;
+    if (!m_blockchain_storage.get_blocks(start_offset, count, bs))
+      return false;
+    for (const auto &b: bs)
+      blocks.push_back(b.second);
+    return true;
+  }
+  //-----------------------------------------------------------------------------------------------
+  bool core::get_transactions(const std::vector<crypto::hash>& txs_ids, std::list<currency::blobdata>& txs, std::list<crypto::hash>& missed_txs) const
+  {
+    return m_blockchain_storage.get_transactions_blobs(txs_ids, txs, missed_txs);
+  }
+  //-----------------------------------------------------------------------------------------------
   bool core::get_transactions(const std::vector<crypto::hash>& txs_ids, std::list<transaction>& txs, std::list<crypto::hash>& missed_txs)
   {
     return m_blockchain_storage.get_transactions(txs_ids, txs, missed_txs);
@@ -488,7 +504,7 @@ namespace currency
     return m_blockchain_storage.find_blockchain_supplement(qblock_ids, resp);
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count)
+  bool core::find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<currency::blobdata, std::list<currency::blobdata> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count)
   {
     return m_blockchain_storage.find_blockchain_supplement(req_start_block, qblock_ids, blocks, total_height, start_height, max_count);
   }
@@ -528,11 +544,28 @@ namespace currency
     m_miner.resume();
   }
   //-----------------------------------------------------------------------------------------------
+  block_complete_entry get_block_complete_entry(block& b, tx_memory_pool &pool)
+  {
+    block_complete_entry bce;
+    bce.block = currency::block_to_blob(b);
+    for (const auto &tx_hash: b.tx_hashes)
+    {
+      currency::transaction tx;
+      CHECK_AND_ASSERT_THROW_MES(pool.get_transaction(tx_hash, tx), "Transaction not found in pool");
+      bce.txs.push_back(currency::tx_to_blob(tx));
+    }
+    return bce;
+  }
+  //-----------------------------------------------------------------------------------------------
   bool core::handle_block_found(block& b)
   {
     block_verification_context bvc = boost::value_initialized<block_verification_context>();
     m_miner.pause();
+    std::list<block_complete_entry> blocks;
+    blocks.push_back(get_block_complete_entry(b, m_mempool));
+    prepare_handle_incoming_blocks(blocks);
     m_blockchain_storage.add_new_block(b, bvc);
+    cleanup_handle_incoming_blocks(true);
     //anyway - update miner template
     update_miner_block_template();
     m_miner.resume();
@@ -546,8 +579,8 @@ namespace currency
       arg.hop = 0;
       arg.current_blockchain_height = m_blockchain_storage.get_current_blockchain_height();
       std::list<crypto::hash> missed_txs;
-      std::list<transaction> txs;
-      m_blockchain_storage.get_transactions(b.tx_hashes, txs, missed_txs);
+      std::list<currency::blobdata> txs;
+      m_blockchain_storage.get_transactions_blobs(b.tx_hashes, txs, missed_txs);
       if(missed_txs.size() &&  m_blockchain_storage.get_block_id_by_height(get_block_height(b)) != get_block_hash(b))
       {
         LOG_PRINT_L0("Block found but, seems that reorganize just happened after that, do not relay this block");
@@ -559,7 +592,7 @@ namespace currency
       block_to_blob(b, arg.b.block);
       //pack transactions
       BOOST_FOREACH(auto& tx,  txs)
-        arg.b.txs.push_back(t_serializable_object_to_blob(tx));
+        arg.b.txs.push_back(tx);
 
       m_pprotocol->relay_block(arg, exclude_context);
     }
