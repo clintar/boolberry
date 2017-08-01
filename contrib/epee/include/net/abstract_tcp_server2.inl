@@ -378,6 +378,12 @@ DISABLE_VS_WARNINGS(4355)
   }
   //---------------------------------------------------------------------------------
   template<class t_protocol_handler>
+  bool connection<t_protocol_handler>::cancel()
+  {
+    return close();
+  }
+  //---------------------------------------------------------------------------------
+  template<class t_protocol_handler>
   void connection<t_protocol_handler>::handle_write(const boost::system::error_code& e, size_t cb)
   {
     TRY_ENTRY();
