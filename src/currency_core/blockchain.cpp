@@ -3249,7 +3249,6 @@ bool Blockchain::add_new_block(const block& bl_, block_verification_context& bvc
   }
 
   //check that block refers to chain tail
-  bl.prev_id = get_top_block_id();
   if (!(bl.prev_id == get_top_block_id()))
   {
     LOG_PRINT_L3("block with id: " << id << " has prev_id: " << bl.prev_id << ", but want: " << get_top_block_id() << ".");
