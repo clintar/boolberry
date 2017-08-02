@@ -32,7 +32,7 @@
 #include "currency_protocol/blobdatatype.h" // for type blobdata
 #include <boost/thread/tss.hpp>
 
-#include <lmdb.h>
+#include <../../../contrib/db_drivers/liblmdb/lmdb.h>
 
 #define ENABLE_AUTO_RESIZE
 

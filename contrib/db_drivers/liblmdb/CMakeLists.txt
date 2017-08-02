@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2015, The Monero Project
+# Copyright (c) 2014-2017, The Monero Project
 # 
 # All rights reserved.
 # 
@@ -27,11 +27,13 @@
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 if(FREEBSD)
-  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DMDB_DSYNC=O_SYNC")
+  add_definitions(-DMDB_DSYNC=O_SYNC)
 endif()
 
-# pass the VL32 flag so that we actually invoke the VL32 extensions
-set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DVL32")
+if(ANDROID)
+  add_definitions("-DANDROID=1")
+endif()
+
 
 set (lmdb_sources
 mdb.c
@@ -42,5 +44,13 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 add_library(lmdb
   ${lmdb_sources})
 target_link_libraries(lmdb
-  LINK_PRIVATE
+  PRIVATE
     ${CMAKE_THREAD_LIBS_INIT})
+if(WIN32)
+  target_link_libraries(lmdb
+    -lntdll)
+endif()
+if(${ARCH_WIDTH} EQUAL 32)
+  target_compile_definitions(lmdb
+    PUBLIC -DMDB_VL32)
+endif()
