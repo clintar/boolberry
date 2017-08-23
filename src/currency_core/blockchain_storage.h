@@ -385,7 +385,7 @@ namespace currency
 
     std::vector<std::pair<crypto::hash, size_t> >& amount_outs_vec = it->second;
     size_t count = 0;
-    BOOST_FOREACH(uint64_t i, absolute_offsets)
+    for (const uint64_t& i : absolute_offsets)
     {
       if(i >= amount_outs_vec.size() )
       {

@@ -59,6 +59,8 @@ typedef struct mdb_txn_cursors
 
   MDB_cursor *m_txc_scratch_buf;
 
+  MDB_cursor *m_txc_properties;
+
 } mdb_txn_cursors;
 
 #define m_cur_blocks	m_cursors->m_txc_blocks
@@ -67,6 +69,7 @@ typedef struct mdb_txn_cursors
 #define m_cur_aliases	m_cursors->m_txc_aliases
 #define m_cur_addr_to_aliases	m_cursors->m_txc_addr_to_aliases
 #define m_cur_scratch_buf	m_cursors->m_txc_scratch_buf
+#define m_cur_properties	m_cursors->m_txc_properties
 #define m_cur_output_txs	m_cursors->m_txc_output_txs
 #define m_cur_output_amounts	m_cursors->m_txc_output_amounts
 #define m_cur_txs	m_cursors->m_txc_txs
@@ -90,6 +93,7 @@ typedef struct mdb_rflags
   bool m_rf_tx_outputs;
   bool m_rf_spent_keys;
   bool m_rf_scratch_buf;
+  bool m_rf_properties;
 } mdb_rflags;
 
 typedef struct mdb_threadinfo
@@ -233,6 +237,10 @@ public:
   
   virtual bool update_scratch(uint64_t pos, crypto::hash &segment);
 
+  virtual bool update_pruned_height(uint64_t pos);
+
+  virtual uint64_t get_pruned_height_local();
+
   virtual bool push_scratch(crypto::hash &segment);
 
   virtual crypto::hash get_scratch(uint64_t pos) const;
@@ -316,6 +324,8 @@ private:
   virtual void remove_block();
 
   virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash);
+
+  virtual bool update_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash);
 
   virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx);
 

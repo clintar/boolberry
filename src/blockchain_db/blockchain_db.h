@@ -491,7 +491,9 @@ virtual bool push_block_scratchpad_data_db(const block& blk);
    * @return the block requested
    */
   block get_block(const crypto::hash& h) const;
-  
+
+  bool update_transaction_data_local(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash);
+
   // return header for block with hash <h>
   virtual block_header get_block_header(const crypto::hash& h) const = 0;
   virtual currency::blobdata get_block_blob_from_height(const uint64_t& height) const = 0;
@@ -565,6 +567,8 @@ virtual bool push_block_scratchpad_data_db(const block& blk);
 
   virtual bool get_tx_blob(const crypto::hash& h, currency::blobdata &tx) const = 0;
 
+  virtual bool update_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash) = 0;
+  
   // returns the total number of transactions in all blocks
   virtual uint64_t get_tx_count() const = 0;
 
@@ -581,6 +585,12 @@ virtual bool push_block_scratchpad_data_db(const block& blk);
   virtual bool add_alias_info(alias_info& info) const = 0;
   
   virtual bool update_scratch(uint64_t pos, crypto::hash &segment) = 0;
+
+  virtual bool update_pruned_height(uint64_t pos) = 0;
+
+  bool update_pruned_height_local(uint64_t pos);
+
+  virtual uint64_t get_pruned_height_local() = 0;
 
   virtual bool push_scratch(crypto::hash &segment) = 0;
 

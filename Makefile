@@ -2,9 +2,16 @@ all: all-release
 
 cmake-debug:
 	mkdir -p build/debug
-	cd build/debug && cmake -D CMAKE_BUILD_TYPE=Debug ../..
+	cd build/debug && cmake -D CMAKE_BUILD_TYPE=Debug -DDATABASE=lmdb ../..
+
+cmake-debug-testnet:
+	mkdir -p build/debug
+	cd build/debug && cmake -D CMAKE_BUILD_TYPE=Debug -DTESTNET=ON -DDATABASE=lmdb ../..
 
 build-debug: cmake-debug
+	cd build/debug && $(MAKE)
+
+build-debug-testnet: cmake-debug-testnet
 	cd build/debug && $(MAKE)
 
 test-debug: build-debug
@@ -14,7 +21,7 @@ all-debug: build-debug
 
 cmake-release:
 	mkdir -p build/release
-	cd build/release && cmake -D CMAKE_BUILD_TYPE=Release ../..
+	cd build/release && cmake -D CMAKE_BUILD_TYPE=Release -DDATABASE=lmdb ../..
 
 build-release: cmake-release
 	cd build/release && $(MAKE)

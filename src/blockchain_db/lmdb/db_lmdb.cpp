@@ -762,6 +762,38 @@ uint64_t BlockchainLMDB::add_transaction_data(const crypto::hash& blk_hash, cons
 
   return tx_id;
 }
+bool BlockchainLMDB::update_transaction_data(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash)
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  mdb_txn_cursors *m_cursors = &m_wcursors;
+  
+
+  int result;
+//  uint64_t tx_id = get_tx_count();
+  CURSOR(txs)
+  CURSOR(tx_indices)
+
+  
+  MDB_val_set(val_h, tx_hash);
+  result = mdb_cursor_get(m_cur_tx_indices, (MDB_val *)&zerokval, &val_h, MDB_GET_BOTH);
+  if (result != 0) {
+    if (result != MDB_NOTFOUND) {
+      throw1(DB_ERROR(lmdb_error(std::string("Error checking if tx index exists for tx hash ") + epee::string_tools::pod_to_hex(tx_hash) + ": ", result).c_str()));
+    }
+    throw1(TX_DNE(std::string("Attempting to update transaction that isn't in the db (tx id ").append(epee::string_tools::pod_to_hex(tx_hash)).append(")").c_str()));
+  } 
+  
+  txindex *tip = (txindex *)val_h.mv_data;
+  
+  MDB_val_set(val_tx_id, tip->data.tx_id);
+  MDB_val_copy<blobdata> blob(tx_to_blob(tx));
+  result = mdb_cursor_put(m_cur_txs, &val_tx_id, &blob, MDB_NODUPDATA);
+  if (result)
+    throw0(DB_ERROR(lmdb_error("Failed to add tx blob to db transaction: ", result).c_str()));
+
+  return true;
+}
 
 // TODO: compare pros and cons of looking up the tx hash's tx index once and
 // passing it in to functions like this
@@ -1128,7 +1160,7 @@ void BlockchainLMDB::open(const std::string& filename, const int mdb_flags)
   lmdb_db_open(txn, LMDB_BLOCK_INFO, MDB_INTEGERKEY | MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, m_block_info, "Failed to open db handle for m_block_info");
   lmdb_db_open(txn, LMDB_BLOCK_HEIGHTS, MDB_INTEGERKEY | MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, m_block_heights, "Failed to open db handle for m_block_heights");
 
-  lmdb_db_open(txn, LMDB_TXS, MDB_INTEGERKEY | MDB_CREATE, m_txs, "Failed to open db handle for m_txs");
+  lmdb_db_open(txn, LMDB_TXS, MDB_INTEGERKEY | MDB_CREATE | MDB_NODUPDATA, m_txs, "Failed to open db handle for m_txs");
   lmdb_db_open(txn, LMDB_TX_INDICES, MDB_INTEGERKEY | MDB_CREATE | MDB_DUPSORT | MDB_DUPFIXED, m_tx_indices, "Failed to open db handle for m_tx_indices");
   lmdb_db_open(txn, LMDB_TX_OUTPUTS, MDB_INTEGERKEY | MDB_CREATE, m_tx_outputs, "Failed to open db handle for m_tx_outputs");
 
@@ -1460,6 +1492,57 @@ bool BlockchainLMDB::update_scratch(uint64_t pos, crypto::hash &segment)
   if (aresult)
     throw0(DB_ERROR(std::string("Failed to add scratchpad segment: ").append(mdb_strerror(aresult)).c_str()));
   return true;
+}
+
+bool BlockchainLMDB::update_pruned_height(uint64_t pos)
+{
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  mdb_txn_cursors *m_cursors = &m_wcursors;
+  pos ++;
+  CURSOR(properties)
+
+  MDB_val_copy<const char*> k("pruned_height");
+  MDB_val_copy<uint64_t> v(pos);
+  auto aresult = mdb_cursor_put(m_cur_properties, &k, &v, 0);
+  if (aresult)
+    throw0(DB_ERROR(std::string("Failed to save pruned height: ").append(mdb_strerror(aresult)).c_str()));
+  return true;
+  
+}
+
+uint64_t BlockchainLMDB::get_pruned_height_local()
+{
+
+  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+  check_open();
+  TXN_PREFIX_RDONLY();
+  RCURSOR(properties);
+  
+  MDB_val_copy<const char*> key("pruned_height");
+  MDB_val result;
+  auto get_result = mdb_cursor_get(m_cur_properties, &key, &result, MDB_SET);
+  if (get_result)
+    return 0;
+    //throw0(DB_ERROR(std::string("Failed to get pruned height: ").append(mdb_strerror(get_result)).c_str()));
+  TXN_POSTFIX_RDONLY();
+  uint64_t ret  = *(const uint64_t*)result.mv_data;
+  return ret;
+
+  
+  
+  
+//    MDB_val_copy<const char*> k1("pruned_update");
+//  MDB_val v1;
+//  auto get_result1 = mdb_get(txn, m_properties, &k1, &v1);
+//  if(get_result1 == MDB_SUCCESS)
+//  {
+//    m_current_pruned_rs_height = *(const uint64_t*)v1.mv_data;
+//  }
+//  else
+//  {
+//    m_current_pruned_rs_height = 0;
+//  }
 }
 
 bool BlockchainLMDB::push_scratch(crypto::hash &segment)
@@ -1825,7 +1908,7 @@ uint64_t BlockchainLMDB::get_block_already_donated_coins(const uint64_t& height)
   auto get_result = mdb_cursor_get(m_cur_block_info, (MDB_val *)&zerokval, &result, MDB_GET_BOTH);
   if (get_result == MDB_NOTFOUND)
   {
-    throw0(BLOCK_DNE(std::string("Attempt to get generated coins from height ").append(boost::lexical_cast<std::string>(height)).append(" failed -- block size not in db").c_str()));
+    throw0(BLOCK_DNE(std::string("Attempt to get donated coins from height ").append(boost::lexical_cast<std::string>(height)).append(" failed -- block size not in db").c_str()));
   }
   else if (get_result)
     throw0(DB_ERROR("Error attempting to retrieve a total generated coins from the db"));
@@ -1848,7 +1931,7 @@ uint64_t BlockchainLMDB::get_block_scratchpad_offset(const uint64_t& height) con
   auto get_result = mdb_cursor_get(m_cur_block_info, (MDB_val *)&zerokval, &result, MDB_GET_BOTH);
   if (get_result == MDB_NOTFOUND)
   {
-    throw0(BLOCK_DNE(std::string("Attempt to get generated coins from height ").append(boost::lexical_cast<std::string>(height)).append(" failed -- block size not in db").c_str()));
+    throw0(BLOCK_DNE(std::string("Attempt to get scratchpad offset from height ").append(boost::lexical_cast<std::string>(height)).append(" failed -- block size not in db").c_str()));
   }
   else if (get_result)
     throw0(DB_ERROR("Error attempting to retrieve a total generated coins from the db"));

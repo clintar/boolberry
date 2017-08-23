@@ -11,7 +11,6 @@
 #include "currency_basic.h"
 #include "difficulty.h"
 #include "math_helper.h"
-//TODO Clintar Fix this back up for aliases
 #if BLOCKCHAIN_DB == DB_LMDB
 #include "blockchain.h"
 #else
@@ -35,7 +34,6 @@ namespace currency
   class miner
   {
   public: 
-      //TODO: Clintar Fix this back up for aliases
 #if BLOCKCHAIN_DB == DB_LMDB
     miner(i_miner_handler* phandler, Blockchain& bc);
 #else
@@ -119,7 +117,6 @@ namespace currency
     std::list<boost::thread> m_threads;
     ::critical_section m_threads_lock;
     i_miner_handler* m_phandler;
-    //TODO: Clintar fix this back up for aliases
 #if BLOCKCHAIN_DB == DB_LMDB
     Blockchain& m_bc;
 #else

@@ -17,7 +17,6 @@ using namespace epee;
 #include "currency_config.h"
 #include "currency_format_utils.h"
 #include "misc_language.h"
-
 #include "blockchain_db/blockchain_db.h"
 #include "blockchain_db/lmdb/db_lmdb.h"
 #include "miner_common.h"
@@ -34,7 +33,6 @@ namespace currency
 #else
               m_blockchain_storage(&m_mempool),
 #endif
-//TODO: Clintar Fix this back up for aliases
               m_miner(this, m_blockchain_storage),
               m_miner_address(boost::value_initialized<account_public_address>()), 
               m_starter_message_showed(false)
@@ -263,7 +261,6 @@ namespace currency
     //bool show_time_stats = command_line::get_arg(vm, daemon_args::arg_show_time_stats) != 0;
     bool show_time_stats = false;
     m_blockchain_storage.set_show_time_stats(show_time_stats);
-    LOG_PRINT_L0("Loading scratchpad file: " << sp_folder.string() << " ...");
     m_blockchain_storage.import_scratchpad_from_file(scratchpad_path);
 #else
     r = m_blockchain_storage.init(m_config_folder);
@@ -616,9 +613,7 @@ namespace currency
   //-----------------------------------------------------------------------------------------------
   bool core::prepare_handle_incoming_blocks(const std::list<block_complete_entry> &blocks)
   {
-#if BLOCKCHAIN_DB == DB_LMDB
     m_blockchain_storage.prepare_handle_incoming_blocks(blocks);
-#endif
     return true;
   }
 

@@ -143,7 +143,23 @@ bool BlockchainDB::push_block_scratchpad_data_db(const block& blk)
   }
   return true;
 }
+bool BlockchainDB::update_transaction_data_local(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash& tx_hash)
+{
+  bool retval;
+  block_txn_start(false);
+  retval = update_transaction_data(blk_hash, tx, tx_hash);
+  block_txn_stop();
+  return retval;
+}
 
+bool BlockchainDB::update_pruned_height_local(uint64_t pos)
+{
+  bool retval;
+  block_txn_start(false);
+  retval = update_pruned_height(pos);
+  block_txn_stop();
+  return retval;
+}
 
 uint64_t BlockchainDB::add_block( const block& blk
                                 , const size_t& block_size

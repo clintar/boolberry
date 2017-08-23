@@ -137,11 +137,11 @@ namespace currency
     }
     block_reward += fee;
     uint64_t total_donation_amount = 0;//(max_donation * percents_to_donate)/100;
-#if BLOCKCHAIN_DB == DB_LMDB
-    if((height + 1) && !((height + 1)%CURRENCY_DONATIONS_INTERVAL))
-#else
+//#if BLOCKCHAIN_DB == DB_LMDB
+//    if((height + 1) && !((height + 1)%CURRENCY_DONATIONS_INTERVAL))
+//#else
     if(height && !(height%CURRENCY_DONATIONS_INTERVAL))
-#endif
+//#endif
       total_donation_amount = amount_to_donate;
 
     uint64_t royalty = 0;
