@@ -21,6 +21,8 @@ using namespace epee;
 #include "serialization/binary_utils.h"
 using namespace currency;
 
+#define UNSIGNED_TX_PREFIX "Monero unsigned tx set\003"
+#define SIGNED_TX_PREFIX "Monero signed tx set\003"
 namespace tools
 {
 //----------------------------------------------------------------------------------------------------
@@ -931,16 +933,180 @@ std::string wallet2::get_alias_for_address(const std::string& addr)
 }
 //----------------------------------------------------------------------------------------------------
 void wallet2::transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count,
-                       uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, currency::transaction& tx)
+                       uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, currency::transaction& tx, pending_tx& ptx)
 {
-  transfer(dsts, fake_outputs_count, unlock_time, fee, extra, detail::digit_split_strategy, tx_dust_policy(fee), tx);
+  transfer(dsts, fake_outputs_count, unlock_time, fee, extra, detail::digit_split_strategy, tx_dust_policy(fee), tx, ptx);
 }
 //----------------------------------------------------------------------------------------------------
 void wallet2::transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count,
                        uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra)
 {
   currency::transaction tx;
-  transfer(dsts, fake_outputs_count, unlock_time, fee, extra, tx);
+  pending_tx ptx;
+  transfer(dsts, fake_outputs_count, unlock_time, fee, extra, tx, ptx);
+}
+//----------------------------------------------------------------------------------------------------
+// take a pending tx and actually send it to the daemon
+void wallet2::commit_tx(pending_tx& ptx)
+{
+  using namespace currency;
+  crypto::hash txid;
+
+  COMMAND_RPC_SEND_RAW_TX::request req;
+    req.tx_as_hex = epee::string_tools::buff_to_hex_nodelimer(tx_to_blob(ptx.tx));
+    COMMAND_RPC_SEND_RAW_TX::response daemon_send_resp;
+    bool r = m_core_proxy->call_COMMAND_RPC_SEND_RAW_TX(req, daemon_send_resp);  
+    CHECK_AND_THROW_WALLET_EX(!r, error::no_connection_to_daemon, "sendrawtransaction");
+    CHECK_AND_THROW_WALLET_EX(daemon_send_resp.status == CORE_RPC_STATUS_BUSY, error::daemon_busy, "sendrawtransaction");
+    CHECK_AND_THROW_WALLET_EX(daemon_send_resp.status != CORE_RPC_STATUS_OK, error::tx_rejected, ptx.tx, daemon_send_resp.status);
+    
+    std::string recipient;
+    for (const auto& d : ptx.dests)
+    {
+      if (recipient.size())
+        recipient += ", ";
+      recipient += get_account_address_as_str(d.addr);
+    }
+    add_sent_unconfirmed_tx(ptx.tx, ptx.change_dts.amount, recipient);
+
+    LOG_PRINT_L2("transaction " << get_transaction_hash(ptx.tx) << " generated ok and sent to daemon, key_images: [" << ptx.key_images << "]");
+
+    BOOST_FOREACH(transfer_container::iterator it, ptx.selected_transfers)
+      it->m_spent = true;
+
+    LOG_PRINT_L0("Transaction successfully sent. <" << get_transaction_hash(ptx.tx) << ">" << ENDL 
+                  << "Commission: " << print_money(ptx.fee+ptx.dust) << " (dust: " << print_money(ptx.dust) << ")" << ENDL
+                  << "Balance: " << print_money(balance()) << ENDL
+                  << "Unlocked: " << print_money(unlocked_balance()) << ENDL
+                  << "Please, wait for confirmation for your balance to be unlocked.");
+}
+
+void wallet2::commit_tx(std::vector<pending_tx>& ptx_vector)
+{
+  for (auto & ptx : ptx_vector)
+  {
+    commit_tx(ptx);
+  }
+}
+//----------------------------------------------------------------------------------------------------
+bool wallet2::save_tx(const std::vector<pending_tx>& ptx_vector, const std::string &filename)
+{
+  LOG_PRINT_L0("saving " << ptx_vector.size() << " transactions");
+  unsigned_tx_set txs;
+  for (auto &tx: ptx_vector)
+  {
+    tx_construction_data construction_data = tx.construction_data;
+    // Short payment id is encrypted with tx_key. 
+    // Since sign_tx() generates new tx_keys and encrypts the payment id, we need to save the decrypted payment ID
+    // Get decrypted payment id from pending_tx
+
+    // Save tx construction_data to unsigned_tx_set
+    txs.txes.push_back(construction_data);      
+  }
+  
+  txs.transfers = m_transfers;
+  // save as binary
+  std::ostringstream oss;
+  boost::archive::portable_binary_oarchive ar(oss);
+  try
+  {
+    ar << txs;
+  }
+  catch (...)
+  {
+    return false;
+  }
+  LOG_PRINT_L2("Saving unsigned tx data: " << oss.str());
+  return epee::file_io_utils::save_string_to_file(filename, std::string(UNSIGNED_TX_PREFIX) + oss.str());  
+}
+struct exported_tx_set_data
+{
+  std::vector<tools::wallet2::pending_tx> ptx;
+  BEGIN_SERIALIZE_OBJECT()
+    FIELD(ptx)
+  END_SERIALIZE()
+};
+
+//bool wallet2::save_tx(std::vector<pending_tx>& ptx_vector, const std::string &filename)
+//{
+//  LOG_PRINT_L0("saving " << ptx_vector.size() << " transactions");
+//  exported_tx_set_data txs;
+//  txs.ptx = ptx_vector;
+//  std::string s = obj_to_json_str(txs);
+//  LOG_PRINT_L2("Saving unsigned tx data: " << s);
+//  // save as binary as there's no implementation of loading a json_archive
+//  ::serialization::dump_binary(txs, s);
+//  return epee::file_io_utils::save_string_to_file(filename, s);
+//}
+
+bool wallet2::sign_tx(const std::string &unsigned_filename, const std::string &signed_filename)
+{
+  std::string s;
+  boost::system::error_code errcode;
+
+  if (!boost::filesystem::exists(unsigned_filename, errcode))
+  {
+    LOG_PRINT_L0("File " << unsigned_filename << " does not exist: " << errcode);
+    return false;
+  }
+  if (!epee::file_io_utils::load_file_to_string(unsigned_filename.c_str(), s))
+  {
+    LOG_PRINT_L0("Failed to load from " << unsigned_filename);
+    return false;
+  }
+  exported_tx_set_data exported_txs;
+  if (!::serialization::parse_binary(s, exported_txs))
+  {
+    LOG_PRINT_L0("Failed to parse data from " << unsigned_filename);
+    return false;
+  }
+  LOG_PRINT_L1("Loaded tx unsigned data from binary: " << exported_txs.ptx.size() << " transactions");
+
+  // sign the transactions
+  for (size_t n = 0; n < exported_txs.ptx.size(); ++n)
+  {
+    const tools::wallet2::tx_construction_data &sd = exported_txs.ptx[n].construction_data;
+    LOG_PRINT_L1(" " << (n+1) << ": " << sd.sources.size() << " inputs, mixin " << (sd.sources[0].outputs.size()-1));
+    currency::transaction &tx = exported_txs.ptx[n].tx;
+    bool r = currency::construct_tx(m_account.get_keys(), sd.sources, sd.dests, sd.extra, tx, sd.unlock_time);
+    CHECK_AND_THROW_WALLET_EX(!r, error::tx_not_constructed, sd.sources, sd.dests, sd.unlock_time);
+    CHECK_AND_THROW_WALLET_EX(m_upper_transaction_size_limit <= get_object_blobsize(tx), error::tx_too_big, tx, m_upper_transaction_size_limit);
+  }
+
+  s = obj_to_json_str(exported_txs);
+  LOG_PRINT_L2("Saving signed tx data: " << s);
+  // save as binary as there's no implementation of loading a json_archive
+  ::serialization::dump_binary(exported_txs, s);
+  return epee::file_io_utils::save_string_to_file(signed_filename, s);
+}
+
+bool wallet2::load_tx(const std::string &signed_filename, std::vector<tools::wallet2::pending_tx> &ptx)
+{
+  std::string s;
+  boost::system::error_code errcode;
+  exported_tx_set_data signed_txs;
+
+  if (!boost::filesystem::exists(signed_filename, errcode))
+  {
+    LOG_PRINT_L0("File " << signed_filename << " does not exist: " << errcode);
+    return false;
+  }
+
+  if (!epee::file_io_utils::load_file_to_string(signed_filename.c_str(), s))
+  {
+    LOG_PRINT_L0("Failed to load from " << signed_filename);
+    return false;
+  }
+  if (!::serialization::parse_binary(s, signed_txs))
+  {
+    LOG_PRINT_L0("Failed to parse data from " << signed_filename);
+    return false;
+  }
+  LOG_PRINT_L1("Loaded signed tx data from binary: " << signed_txs.ptx.size() << " transactions");
+
+  ptx = signed_txs.ptx;
+
+  return true;
 }
 //----------------------------------------------------------------------------------------------------
 }

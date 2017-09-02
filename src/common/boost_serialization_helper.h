@@ -6,6 +6,9 @@
 
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/portable_binary_oarchive.hpp>
+#include <boost/archive/portable_binary_iarchive.hpp>
+
 
 
 #define CHECK_PROJECT_NAME()    std::string project_name = CURRENCY_NAME; ar & project_name;  if(project_name != CURRENCY_NAME) {throw std::runtime_error(std::string("wrong storage file: project name in file: ") + project_name + ", expected: " + CURRENCY_NAME );}

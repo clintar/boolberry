@@ -76,6 +76,14 @@ namespace tools
       crypto::key_image m_key_image; //TODO: key_image stored twice :(
 
       uint64_t amount() const { return m_tx.vout[m_internal_output_index].amount; }
+            BEGIN_SERIALIZE_OBJECT()
+        FIELD(m_block_height)
+        FIELD(m_tx)
+        FIELD(m_internal_output_index)
+        FIELD(m_global_output_index)
+        FIELD(m_spent)
+        FIELD(m_key_image)
+      END_SERIALIZE()
     };
 
     struct unconfirmed_transfer_details
@@ -94,11 +102,22 @@ namespace tools
       uint64_t m_block_height;
       uint64_t m_unlock_time;
     };
-    
+
+
     typedef std::unordered_multimap<crypto::hash, payment_details> payment_container;
 
     typedef std::vector<transfer_details> transfer_container;
-
+    struct tx_construction_data
+    {
+      std::vector<currency::tx_source_entry> sources;
+      currency::tx_destination_entry change_dts;
+      std::vector<currency::tx_destination_entry> splitted_dsts; // split, includes change
+      std::list<transfer_container::iterator> selected_transfers;
+      std::vector<uint8_t> extra;
+      uint64_t unlock_time;
+      bool use_rct;
+      std::vector<currency::tx_destination_entry> dests; // original setup, does not include change
+    };
     struct keys_file_data
     {
       crypto::chacha8_iv iv;
@@ -108,6 +127,33 @@ namespace tools
         FIELD(iv)
         FIELD(account_data)
       END_SERIALIZE()
+    };
+
+    struct pending_tx
+    {
+      currency::transaction tx;
+      uint64_t dust, fee;
+      bool dust_added_to_fee;
+      currency::tx_destination_entry change_dts;
+      std::list<transfer_container::iterator> selected_transfers;
+      std::string key_images;
+      crypto::secret_key tx_key;
+      std::vector<currency::tx_destination_entry> dests;
+
+      tx_construction_data construction_data;
+    };
+    // The term "Unsigned tx" is not really a tx since it's not signed yet.
+    // It doesnt have tx hash, key and the integrated address is not separated into addr + payment id.
+    struct unsigned_tx_set
+    {
+      std::vector<tx_construction_data> txes;
+      wallet2::transfer_container transfers;
+    };
+
+    struct signed_tx_set
+    {
+      std::vector<pending_tx> ptx;
+      std::vector<crypto::key_image> key_images;
     };
 
     std::vector<unsigned char> generate(const std::string& wallet, const std::string& password);
@@ -141,9 +187,14 @@ namespace tools
     template<typename T>
     void transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy);
     template<typename T>
-    void transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy, currency::transaction &tx, uint8_t tx_outs_attr = CURRENCY_TO_KEY_OUT_RELAXED);
+    void transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy, currency::transaction &tx, pending_tx& ptx, uint8_t tx_outs_attr = CURRENCY_TO_KEY_OUT_RELAXED, bool save_only=false);
     void transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra);
-    void transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, currency::transaction& tx);
+    void transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, currency::transaction& tx, pending_tx& ptx);
+    void commit_tx(pending_tx& ptx_vector);
+    void commit_tx(std::vector<pending_tx>& ptx_vector);
+    bool save_tx(const std::vector<pending_tx>& ptx_vector, const std::string &filename);
+    bool sign_tx(const std::string &unsigned_filename, const std::string &signed_filename);
+    bool load_tx(const std::string &signed_filename, std::vector<tools::wallet2::pending_tx> &ptx);
     bool check_connection();
     void get_transfers(wallet2::transfer_container& incoming_transfers) const;
     void get_payments(const crypto::hash& payment_id, std::list<payment_details>& payments, uint64_t min_height = 0) const;
@@ -364,13 +415,14 @@ namespace tools
   void wallet2::transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count,
     uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy)
   {
+    pending_tx ptx;
     currency::transaction tx;
     transfer(dsts, fake_outputs_count, unlock_time, fee, extra, destination_split_strategy, dust_policy, tx);
   }
 
   template<typename T>
   void wallet2::transfer(const std::vector<currency::tx_destination_entry>& dsts, size_t fake_outputs_count,
-    uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy, currency::transaction &tx, uint8_t tx_outs_attr)
+    uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy, currency::transaction &tx, pending_tx &ptx, uint8_t tx_outs_attr, bool save_only)
   {
     using namespace currency;
     CHECK_AND_THROW_WALLET_EX(dsts.empty(), error::zero_destination);
@@ -496,7 +548,26 @@ namespace tools
       return true;
     });
     CHECK_AND_THROW_WALLET_EX(!all_are_txin_to_key, error::unexpected_txin_type, tx);
-
+    if(save_only)
+    {
+      ptx.key_images = key_images;
+      ptx.fee = (dust_policy.add_to_fee ? fee+dust : fee);
+//      ptx.dust = ((dust_policy.add_to_fee || dust_sent_elsewhere) ? dust : 0);
+      ptx.dust_added_to_fee = dust_policy.add_to_fee;
+      ptx.tx = tx;
+      ptx.change_dts = change_dts;
+      ptx.selected_transfers = selected_transfers;
+//      ptx.tx_key = tx_key;
+      ptx.dests = dsts;
+      ptx.construction_data.sources = sources;
+//      ptx.construction_data.change_dts = change_dts;
+      ptx.construction_data.splitted_dsts = splitted_dsts;
+      ptx.construction_data.selected_transfers = selected_transfers;
+      ptx.construction_data.extra = tx.extra;
+      ptx.construction_data.unlock_time = unlock_time;
+      ptx.construction_data.use_rct = false;
+      ptx.construction_data.dests = dsts;
+    }
     COMMAND_RPC_SEND_RAW_TX::request req;
     req.tx_as_hex = epee::string_tools::buff_to_hex_nodelimer(tx_to_blob(tx));
     COMMAND_RPC_SEND_RAW_TX::response daemon_send_resp;

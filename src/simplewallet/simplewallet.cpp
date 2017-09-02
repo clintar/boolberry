@@ -177,6 +177,8 @@ simple_wallet::simple_wallet()
   m_cmd_binder.set_handler("payments", boost::bind(&simple_wallet::show_payments, this, _1), "payments <payment_id_1> [<payment_id_2> ... <payment_id_N>] - Show payments <payment_id_1>, ... <payment_id_N>");
   m_cmd_binder.set_handler("bc_height", boost::bind(&simple_wallet::show_blockchain_height, this, _1), "Show blockchain height");
   m_cmd_binder.set_handler("transfer", boost::bind(&simple_wallet::transfer, this, _1), "transfer <mixin_count> <addr_1> <amount_1> [<addr_2> <amount_2> ... <addr_N> <amount_N>] [payment_id] - Transfer <amount_1>,... <amount_N> to <address_1>,... <address_N>, respectively. <mixin_count> is the number of transactions yours is indistinguishable from (from 0 to maximum available)");
+  m_cmd_binder.set_handler("sign_transfer", boost::bind(&simple_wallet::sign_transfer, this, _1), "sign_transfer - Sign a transaction from a file");
+  m_cmd_binder.set_handler("submit_transfer", boost::bind(&simple_wallet::submit_transfer, this, _1), "submit_transfer - Submit a signed transaction from a file");
   m_cmd_binder.set_handler("set_log", boost::bind(&simple_wallet::set_log, this, _1), "set_log <level> - Change current log detalization level, <level> is a number 0-4");
   m_cmd_binder.set_handler("address", boost::bind(&simple_wallet::print_address, this, _1), "Show current wallet public address");
   m_cmd_binder.set_handler("save", boost::bind(&simple_wallet::save, this, _1), "Save wallet synchronized data");
@@ -826,9 +828,26 @@ bool simple_wallet::transfer(const std::vector<std::string> &args_)
 
   try
   {
-    currency::transaction tx;
-    m_wallet->transfer(dsts, fake_outs_count, 0, DEFAULT_FEE, extra, tx);
-    success_msg_writer(true) << "Money successfully sent, transaction " << get_transaction_hash(tx) << ", " << get_object_blobsize(tx) << " bytes";
+    
+    if (m_wallet->watch_only())
+    {
+      bool r = m_wallet->save_tx(dsts, "unsigned_monero_tx");
+      if (!r)
+      {
+        fail_msg_writer() << "Failed to write transaction to file";
+      }
+      else
+      {
+        success_msg_writer(true) << "Unsigned transaction successfully written to file: " << "unsigned_monero_tx";
+      }
+    }
+    else 
+    {
+      currency::transaction tx;
+      m_wallet->transfer(dsts, fake_outs_count, 0, DEFAULT_FEE, extra, tx);
+      success_msg_writer(true) << "Money successfully sent, transaction " << get_transaction_hash(tx) << ", " << get_object_blobsize(tx) << " bytes";
+    }
+    
   }
   catch (const tools::error::daemon_busy&)
   {
@@ -883,6 +902,132 @@ bool simple_wallet::transfer(const std::vector<std::string> &args_)
   catch (const tools::error::zero_destination&)
   {
     fail_msg_writer() << "one of destinations is zero";
+  }
+  catch (const tools::error::transfer_error& e)
+  {
+    LOG_ERROR("unknown transfer error: " << e.to_string());
+    fail_msg_writer() << "unknown transfer error: " << e.what();
+  }
+  catch (const tools::error::wallet_internal_error& e)
+  {
+    LOG_ERROR("internal error: " << e.to_string());
+    fail_msg_writer() << "internal error: " << e.what();
+  }
+  catch (const std::exception& e)
+  {
+    LOG_ERROR("unexpected error: " << e.what());
+    fail_msg_writer() << "unexpected error: " << e.what();
+  }
+  catch (...)
+  {
+    LOG_ERROR("Unknown error");
+    fail_msg_writer() << "unknown error";
+  }
+
+  return true;
+}
+
+//----------------------------------------------------------------------------------------------------
+bool simple_wallet::sign_transfer(const std::vector<std::string> &args_)
+{
+  if(m_wallet->watch_only())
+  {
+     fail_msg_writer() << "This is a watch only wallet";
+     return true;
+  }
+
+  bool r = m_wallet->sign_tx("unsigned_monero_tx", "signed_monero_tx");
+  if (!r)
+  {
+    fail_msg_writer() << "Failed to load transaction from file";
+    return true;
+  }
+
+  success_msg_writer(true) << "Transaction successfully signed";
+  return true;
+}
+//----------------------------------------------------------------------------------------------------
+bool simple_wallet::submit_transfer(const std::vector<std::string> &args_)
+{
+  if (!try_connect_to_daemon())
+    return true;
+
+  try
+  {
+    vector<currency::tx_destination_entry> dst_vector;
+    bool r = m_wallet->load_tx("signed_monero_tx", dst_vector);
+    if (!r)
+    {
+      fail_msg_writer() << "Failed to load transaction from file";
+      return true;
+    }
+
+    // actually commit the transactions
+    while (!dst_vector.empty())
+    {
+      auto & ptx = dst_vector.back();
+      m_wallet->commit_tx(ptx);
+      currency::transaction tx;
+      m_wallet->transfer(dst_vector, fake_outs_count, 0, DEFAULT_FEE, extra, tx);
+      success_msg_writer(true) << "Money successfully sent, transaction: " << get_transaction_hash(tx);
+
+      // if no exception, remove element from vector
+      dst_vector.pop_back();
+    }
+  }
+  catch (const tools::error::daemon_busy&)
+  {
+    fail_msg_writer() << "daemon is busy. Please try later";
+  }
+  catch (const tools::error::no_connection_to_daemon&)
+  {
+    fail_msg_writer() << "no connection to daemon. Please, make sure daemon is running.";
+  }
+  catch (const tools::error::wallet_rpc_error& e)
+  {
+    LOG_ERROR("Unknown RPC error: " << e.to_string());
+    fail_msg_writer() << "RPC error: " << e.what();
+  }
+  catch (const tools::error::get_random_outs_error&)
+  {
+    fail_msg_writer() << "failed to get random outputs to mix";
+  }
+  catch (const tools::error::not_enough_money& e)
+  {
+    fail_msg_writer() << boost::format(tr("not enough money to transfer, available only %s, transaction amount %s = %s + %s (fee)")) %
+      print_money(e.available()) %
+      print_money(e.tx_amount() + e.fee()) %
+      print_money(e.tx_amount()) %
+      print_money(e.fee());
+  }
+  catch (const tools::error::not_enough_outs_to_mix& e)
+  {
+    auto writer = fail_msg_writer();
+    writer << "not enough outputs for specified mixin_count" << " = " << e.mixin_count() << ":";
+    for (const currency::COMMAND_RPC_GET_RANDOM_OUTPUTS_FOR_AMOUNTS::outs_for_amount& outs_for_amount : e.scanty_outs())
+    {
+      writer << "\n" << "output amount" << " = " << print_money(outs_for_amount.amount) << ", " << "found outputs to mix" << " = " << outs_for_amount.outs.size();
+    }
+  }
+  catch (const tools::error::tx_not_constructed&)
+  {
+    fail_msg_writer() << "transaction was not constructed";
+  }
+  catch (const tools::error::tx_rejected& e)
+  {
+    fail_msg_writer() << (boost::format(tr("transaction %s was rejected by daemon with status: ")) % get_transaction_hash(e.tx())) << e.status();
+  }
+  catch (const tools::error::tx_sum_overflow& e)
+  {
+    fail_msg_writer() << e.what();
+  }
+  catch (const tools::error::zero_destination&)
+  {
+    fail_msg_writer() << "one of destinations is zero";
+  }
+  catch (const tools::error::tx_too_big& e)
+  {
+    fail_msg_writer() << "Failed to find a suitable way to split transactions";
   }
   catch (const tools::error::transfer_error& e)
   {
